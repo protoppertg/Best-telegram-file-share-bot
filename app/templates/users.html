@@ -32,12 +32,7 @@
                     {% endif %}
                 </td>
                 <td class="px-6 py-4 text-sm flex space-x-3">
-                    {% if not u.is_premium %}
-                    <button hx-post="/admin/users/{{ u.telegram_id }}/grant_premium" hx-vals='{"days": 30}' hx-target="#user-row-{{ u.id }}" hx-swap="outerHTML" class="text-yellow-600 hover:text-yellow-900"><i class="fas fa-crown"></i></button>
-                    {% else %}
-                    <button hx-post="/admin/users/{{ u.telegram_id }}/revoke_premium" hx-target="#user-row-{{ u.id }}" hx-swap="outerHTML" class="text-gray-600 hover:text-gray-900"><i class="fas fa-times-circle"></i></button>
-                    {% endif %}
-                    <button hx-post="/admin/users/{{ u.telegram_id }}/reset_search" hx-target="#user-row-{{ u.id }}" hx-swap="outerHTML" class="text-blue-600 hover:text-blue-900"><i class="fas fa-redo"></i></button>
+                    <a href="/admin/users/{{ u.telegram_id }}" class="text-blue-600 hover:text-blue-900" title="View Profile & Chat"><i class="fas fa-eye"></i></a>
                 </td>
             </tr>
             {% else %}
