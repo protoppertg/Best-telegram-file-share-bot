@@ -1,4 +1,4 @@
-"""Interactive Telegram Admin Panel."""
+"""Interactive Telegram Admin Panel & Auto-Indexer."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from app.models import BotSetting, Document, User
 from app.services import document as doc_service
 from app.services import user as user_service
 from app.utils.logger import logger
-from app.utils.validators import sanitise_text
+from app.utils.validators import sanitise_text, parse_keywords, parse_year
 
 router = Router()
 
@@ -188,6 +188,101 @@ async def fs_invite_link(message: Message, state: FSMContext):
     await state.clear()
     await message.answer("✅ Force Sub settings updated!", reply_markup=admin_menu_kb())
 
+# ── Auto-Index Channel Posts ─────────────────────
+
+@router.channel_post(F.chat.id == int(settings.CHANNEL_ID), F.document)
+async def auto_index_channel_post(message: Message, bot: Bot):
+    """Automatically indexes files dropped directly into the storage channel."""
+    
+    # Prevent duplicate indexing if the bot forwarded this from a user upload
+    if message.caption and message.caption.startswith("📤 Uploaded by:"):
+        return
+
+    file_id = message.document.file_id
+    file_name = message.document.file_name or "Untitled.pdf"
+    message_id = message.id
+
+    async with get_session() as session:
+        # Double check it doesn't exist already
+        result = await session.execute(select(Document).where(Document.file_id == file_id))
+        if result.scalar_one_or_none():
+            return
+
+        doc = await doc_service.create_document(
+            session,
+            file_id=file_id,
+            message_id=message_id,
+            file_name=file_name,
+            subject="Uncategorized",
+            category="Uncategorized",
+            approved=True
+        )
+
+    # Notify admins so they can edit the metadata
+    for admin_id in settings.admin_ids_list:
+        try:
+            await bot.send_message(
+                admin_id,
+                f"📥 <b>Auto-Indexed File</b>\n\n"
+                f"📁 Name: <code>{file_name}</code>\n"
+                f"🆔 ID: {doc.id}\n\n"
+                f"Use the command below to update its metadata so users can find it:\n"
+                f"<code>/edit_doc {doc.id} subject=Physics category=PYQ year=2023</code>"
+            )
+        except Exception:
+            pass
+
+# ── Edit Document Metadata ───────────────────────
+
+@router.message(Command("edit_doc"))
+async def cmd_edit_doc(message: Message, command: CommandObject):
+    """Edit metadata of a document. Usage: /edit_doc <id> <field>=<value>"""
+    if not command.args:
+        await message.answer(
+            "Usage: <code>/edit_doc &lt;id&gt; &lt;field&gt;=&lt;value&gt;</code>\n\n"
+            "Fields: file_name, subject, category, university, semester, year, keywords\n\n"
+            "Example: <code>/edit_doc 42 subject=Physics category=PYQ year=2023</code>"
+        )
+        return
+
+    parts = command.args.split(maxsplit=1)
+    try:
+        doc_id = int(parts[0])
+    except ValueError:
+        await message.answer("Invalid document ID.")
+        return
+
+    if len(parts) < 2:
+        await message.answer("No fields to update. Example: <code>/edit_doc 42 subject=Physics</code>")
+        return
+
+    updates = {}
+    for pair in parts[1].split():
+        if "=" not in pair: continue
+        field, value = pair.split("=", 1)
+        field = field.strip().lower()
+        if field in ("file_name", "subject", "category", "university", "semester"):
+            updates[field] = sanitise_text(value, 255)
+        elif field == "year":
+            updates[field] = parse_year(value)
+        elif field == "keywords":
+            updates[field] = parse_keywords(value)
+
+    if not updates:
+        await message.answer("No valid fields to update.")
+        return
+
+    async with get_session() as session:
+        doc = await doc_service.update_document(session, doc_id, **updates)
+
+    if doc:
+        await message.answer(f"✅ Updated document {doc_id}\nFields: {', '.join(updates.keys())}")
+    else:
+        await message.answer(f"Document {doc_id} not found.")
+
+
+# ── User Management ───────────────────────────────
+
 @router.callback_query(F.data.startswith("adm:users:"))
 async def cb_admin_users(callback: CallbackQuery):
     page = int(callback.data.split(":")[2])
@@ -236,6 +331,8 @@ async def cb_admin_user_actions(callback: CallbackQuery):
             await user_service.reset_search_count(telegram_id)
             await callback.answer("Search count reset!", show_alert=True)
         await cb_admin_user_actions(callback)
+
+# ── Document Management ───────────────────────────
 
 @router.callback_query(F.data.startswith("adm:docs:"))
 async def cb_admin_docs(callback: CallbackQuery):
