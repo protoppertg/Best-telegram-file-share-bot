@@ -24,6 +24,7 @@ router = Router()
 
 class AdminFilter(BaseFilter):
     async def __call__(self, message: Message) -> bool:
+        # Allow channel posts to bypass the admin check
         if message.chat.type == "channel":
             return True
         return message.from_user and message.from_user.id in settings.admin_ids_list
