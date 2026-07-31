@@ -34,6 +34,7 @@ class User(Base):
     last_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     is_premium: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     premium_expiry: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    is_banned: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     search_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     upload_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     last_reset_date: Mapped[date] = mapped_column(Date, default=func.current_date(), nullable=False)
