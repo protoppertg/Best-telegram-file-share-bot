@@ -50,6 +50,11 @@ async def save_force_sub_channels(session, channels_list: list[dict]):
     else:
         s.value = val
 
+async def get_setting(session, key: str, default: str = "") -> str:
+    res = await session.execute(select(BotSetting).where(BotSetting.key == key))
+    s = res.scalar_one_or_none()
+    return s.value if s and s.value else default
+
 
 @router.get("/login", response_class=templates.TemplateResponse)
 async def admin_login(request: Request):
@@ -77,36 +82,70 @@ async def admin_dashboard(request: Request):
     return templates.TemplateResponse(request, "dashboard.html", {"stats": stats, "active": "dashboard"})
 
 
-# ── Settings (Toggle Search & Multiple Force Sub) ──────────
+# ── Settings ─────────────────────────────────────
 
 @router.get("/settings", dependencies=[Depends(verify_admin)], response_class=templates.TemplateResponse)
 async def admin_settings(request: Request):
     async with get_session() as session:
-        search_setting = await session.execute(select(BotSetting).where(BotSetting.key == "search_enabled"))
-        search_setting = search_setting.scalar_one_or_none()
+        search_enabled = await get_setting(session, "search_enabled", "true")
+        ad_enabled = await get_setting(session, "auto_delete_enabled", "false")
+        ad_seconds = await get_setting(session, "auto_delete_seconds", "3600")
+        protect_fwd = await get_setting(session, "protect_forwarding", "false")
         channels = await get_force_sub_channels(session)
-    
-    search_enabled = True
-    if search_setting and search_setting.value == "false":
-        search_enabled = False
         
     return templates.TemplateResponse(request, "settings.html", {
-        "search_enabled": search_enabled, 
+        "search_enabled": search_enabled == "true", 
+        "ad_enabled": ad_enabled == "true",
+        "ad_seconds": ad_seconds,
+        "protect_forwarding": protect_fwd == "true",
         "channels": channels,
         "active": "settings"
     })
 
 
 @router.post("/settings", dependencies=[Depends(verify_admin)])
-async def admin_settings_post(request: Request, search_enabled: str = Form("off")):
-    search_val = "true" if search_enabled == "on" else "false"
+async def admin_settings_post(
+    request: Request, 
+    search_enabled: str = Form("off"), 
+    auto_delete_enabled: str = Form("off"),
+    auto_delete_seconds: str = Form("3600"),
+    protect_forwarding: str = Form("off")
+):
     async with get_session() as session:
+        # Search
+        s_val = "true" if search_enabled == "on" else "false"
         s_setting = await session.execute(select(BotSetting).where(BotSetting.key == "search_enabled"))
         s_setting = s_setting.scalar_one_or_none()
         if not s_setting:
-            session.add(BotSetting(key="search_enabled", value=search_val))
+            session.add(BotSetting(key="search_enabled", value=s_val))
         else:
-            s_setting.value = search_val
+            s_setting.value = s_val
+            
+        # Auto-Delete
+        ad_val = "true" if auto_delete_enabled == "on" else "false"
+        ad_setting = await session.execute(select(BotSetting).where(BotSetting.key == "auto_delete_enabled"))
+        ad_setting = ad_setting.scalar_one_or_none()
+        if not ad_setting:
+            session.add(BotSetting(key="auto_delete_enabled", value=ad_val))
+        else:
+            ad_setting.value = ad_val
+            
+        seconds_val = auto_delete_seconds if auto_delete_seconds.isdigit() else "3600"
+        secs_setting = await session.execute(select(BotSetting).where(BotSetting.key == "auto_delete_seconds"))
+        secs_setting = secs_setting.scalar_one_or_none()
+        if not secs_setting:
+            session.add(BotSetting(key="auto_delete_seconds", value=seconds_val))
+        else:
+            secs_setting.value = seconds_val
+            
+        # Protect Forwarding
+        pf_val = "true" if protect_forwarding == "on" else "false"
+        pf_setting = await session.execute(select(BotSetting).where(BotSetting.key == "protect_forwarding"))
+        pf_setting = pf_setting.scalar_one_or_none()
+        if not pf_setting:
+            session.add(BotSetting(key="protect_forwarding", value=pf_val))
+        else:
+            pf_setting.value = pf_val
             
     return RedirectResponse(url="/admin/settings", status_code=303)
 
