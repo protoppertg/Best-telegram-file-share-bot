@@ -20,7 +20,7 @@ from app.services import document as doc_service
 from app.services.search import search_documents
 from app.services.telegram import forward_to_channel
 from app.services.cache import get_cache
-from app.utils.keyboards import after_file_keyboard, category_keyboard, search_results_keyboard, semester_keyboard
+from app.utils.keyboards import after_file_keyboard, category_keyboard, search_results_keyboard, semester_keyboard, main_menu_kb
 from app.utils.logger import logger
 from app.utils.validators import is_valid_search_query, parse_keywords, parse_year, sanitise_text, validate_pdf_document
 
@@ -48,9 +48,70 @@ async def cmd_start(message: Message, state: FSMContext):
     await message.answer(text, reply_markup=main_menu_kb())
 
 
+@router.message(F.text == "❓ Help")
 @router.message(Command("help"))
 async def cmd_help(message: Message):
-    await message.answer("📖 <b>Help</b>\n\n🔍 /search physics notes\n📤 Send a PDF to upload\n🎟️ /premium - View status")
+    text = (
+        "📖 <b>Help & Guide</b>\n\n"
+        "🔍 <b>Search:</b> Type your query or tap the Search button.\n"
+        "📤 <b>Upload:</b> Send a PDF to support the library.\n"
+        "🎟️ <b>Premium:</b> Get unlimited searches and ad-free downloads.\n\n"
+        "If you get stuck, just use the buttons at the bottom!"
+    )
+    await message.answer(text)
+
+
+@router.message(Command("about"))
+async def cmd_about(message: Message):
+    text = (
+        "ℹ️ <b>About PrepCore</b>\n\n"
+        "PrepCore is a searchable library of study materials.\n"
+        "Search for PDFs, notes, and previous year questions.\n\n"
+        "Built with ❤️ using Python and FastAPI."
+    )
+    await message.answer(text)
+
+
+@router.message(Command("usage"))
+async def cmd_usage(message: Message, db_user: User | None = None):
+    if not db_user:
+        await message.answer("Please send /start first to register.")
+        return
+    search_limit = await user_service.get_user_search_limit(db_user)
+    upload_limit = await user_service.get_user_upload_limit(db_user)
+    text = (
+        "📊 <b>Your Daily Usage</b>\n\n"
+        f"🔍 Searches: {db_user.search_count} / {search_limit}\n"
+        f"📤 Uploads: {db_user.upload_count} / {upload_limit}\n\n"
+        "Limits reset daily."
+    )
+    await message.answer(text)
+
+
+@router.message(F.text == "🎟️ Premium")
+@router.message(Command("premium"))
+async def cmd_premium(message: Message, db_user: User | None = None):
+    if db_user and db_user.is_premium and db_user.premium_expiry:
+        status = f"✅ <b>Active</b> until {db_user.premium_expiry.strftime('%Y-%m-%d %H:%M UTC')}"
+    else:
+        status = "❌ <b>Not active</b>"
+
+    text = (
+        f"🎟️ <b>Premium Status</b>\n\n"
+        f"Status: {status}\n\n"
+        f"<b>Premium Benefits:</b>\n"
+        f"• {settings.PREMIUM_SEARCH_LIMIT} searches per day (vs {settings.FREE_SEARCH_LIMIT} free)\n"
+        f"• {settings.PREMIUM_UPLOAD_LIMIT} uploads per day (vs {settings.FREE_UPLOAD_LIMIT} free)\n"
+        f"• No ads/short links when downloading files\n\n"
+        f"<b>How to get Premium:</b>\n"
+        f"Send a Rs. 100 gift card to the admin. Once verified, the admin will grant you premium status manually."
+    )
+    await message.answer(text)
+
+
+@router.message(F.text == "🔍 Search")
+async def btn_search(message: Message):
+    await message.answer("🔍 Please type your search query now (e.g., <code>physics notes</code>):")
 
 
 @router.message(Command("search"))
@@ -65,6 +126,9 @@ async def cmd_search(message: Message, command: CommandObject, db_user: User | N
 @router.message(StateFilter(None), F.text & ~F.text.startswith("/"))
 async def text_search(message: Message, db_user: User | None = None):
     query = message.text.strip()
+    # Ignore if the user tapped a menu button that doesn't match exact text
+    if query in ["🔍 Search", "📤 Upload", "🎟️ Premium", "❓ Help"]:
+        return
     if not is_valid_search_query(query):
         await message.answer("🔍 Your query is too short. Please enter at least 2 characters.")
         return
@@ -81,7 +145,7 @@ async def _perform_search(message: Message, query: str, db_user: User | None, pa
     async with get_session() as session:
         results, total = await search_documents(session, query, page=page)
         if db_user:
-            await user_service.increment_search_count(session, db_user)
+            await user_service.increment_search_count(session, db_user.telegram_id)
             await user_service.log_search(session, db_user.id, query, total)
 
     if not results:
@@ -97,6 +161,11 @@ async def _perform_search(message: Message, query: str, db_user: User | None, pa
 
     text = f"🔍 <b>Search: {escape(sanitise_text(query, 100))}</b>\n📊 Found <b>{total}</b> result(s) — Page {page}/{total_pages}\n\nTap a file to download:"
     await message.answer(text, reply_markup=search_results_keyboard(results, query_key, page, total_pages))
+
+
+@router.message(F.text == "📤 Upload")
+async def btn_upload(message: Message):
+    await message.answer("📤 Please send the PDF file you want to upload to the library.")
 
 
 @router.message(F.document, StateFilter(None))
@@ -131,7 +200,7 @@ async def upload_file_name(message: Message, state: FSMContext):
     await message.answer("Enter the <b>subject</b> (or /skip):")
 
 
-@router.message(UploadStates.waiting_subject)
+@router.message(UploadStates.waiting_subject, F.text)
 async def upload_subject(message: Message, state: FSMContext):
     subject = None
     if message.text and message.text.strip().lower() != "/skip": subject = sanitise_text(message.text, 255)
@@ -140,7 +209,7 @@ async def upload_subject(message: Message, state: FSMContext):
     await message.answer("Select a <b>category</b>:", reply_markup=category_keyboard())
 
 
-@router.message(UploadStates.waiting_category)
+@router.message(UploadStates.waiting_category, F.text)
 async def upload_category_text(message: Message, state: FSMContext):
     if message.text and not message.text.startswith("/"):
         await state.update_data(category=sanitise_text(message.text, 100))
@@ -158,7 +227,7 @@ async def upload_category_callback(callback, state: FSMContext):
     await callback.answer()
 
 
-@router.message(UploadStates.waiting_university)
+@router.message(UploadStates.waiting_university, F.text)
 async def upload_university(message: Message, state: FSMContext):
     university = None
     if message.text and message.text.strip().lower() != "/skip": university = sanitise_text(message.text, 255)
@@ -167,7 +236,7 @@ async def upload_university(message: Message, state: FSMContext):
     await message.answer("Select the <b>semester</b>:", reply_markup=semester_keyboard())
 
 
-@router.message(UploadStates.waiting_semester)
+@router.message(UploadStates.waiting_semester, F.text)
 async def upload_semester_text(message: Message, state: FSMContext):
     if message.text and not message.text.startswith("/"):
         await state.update_data(semester=sanitise_text(message.text, 50))
@@ -185,7 +254,7 @@ async def upload_semester_callback(callback, state: FSMContext):
     await callback.answer()
 
 
-@router.message(UploadStates.waiting_year)
+@router.message(UploadStates.waiting_year, F.text)
 async def upload_year(message: Message, state: FSMContext):
     year = None
     if message.text and message.text.strip().lower() != "/skip":
@@ -198,7 +267,7 @@ async def upload_year(message: Message, state: FSMContext):
     await message.answer("Enter <b>keywords</b> separated by commas (or /skip):\nExample: <code>thermodynamics, entropy, exam</code>")
 
 
-@router.message(UploadStates.waiting_keywords)
+@router.message(UploadStates.waiting_keywords, F.text)
 async def upload_keywords(message: Message, state: FSMContext, bot: Bot, db_user: User | None = None):
     keywords = []
     if message.text and message.text.strip().lower() != "/skip": keywords = parse_keywords(message.text)
@@ -223,7 +292,7 @@ async def upload_keywords(message: Message, state: FSMContext, bot: Bot, db_user
             semester=data.get("semester"), year=data.get("year"), keywords=keywords, description=None,
             uploaded_by=db_user.telegram_id if db_user else None, approved=approved
         )
-        if db_user: await user_service.increment_upload_count(session, db_user)
+        if db_user: await user_service.increment_upload_count(session, db_user.telegram_id)
 
     if approved:
         await status_msg.edit_text(f"✅ <b>Upload Successful!</b>\n\n📁 {escape(sanitise_text(doc.file_name, 100))}\n\nThank you for supporting the library! 🙏")
@@ -242,4 +311,4 @@ async def cancel_idle(message: Message):
 @router.message(Command("cancel"))
 async def cancel_fsm(message: Message, state: FSMContext):
     await state.clear()
-    await message.answer("❌ Operation cancelled.")
+    await message.answer("❌ Operation cancelled. What would you like to do next?", reply_markup=main_menu_kb())
