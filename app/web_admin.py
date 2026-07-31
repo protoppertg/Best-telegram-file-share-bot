@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Optional
 from pathlib import Path
 import asyncio
+import json
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
@@ -29,6 +30,25 @@ async def verify_admin(request: Request):
     if not request.session.get("is_admin"):
         raise HTTPException(status_code=303, headers={"Location": "/admin/login"})
     return True
+
+# ── Helpers ─────────────────────────────────────
+
+async def get_force_sub_channels(session) -> list[dict]:
+    res = await session.execute(select(BotSetting).where(BotSetting.key == "force_sub_channels"))
+    s = res.scalar_one_or_none()
+    if s and s.value:
+        try: return json.loads(s.value)
+        except: return []
+    return []
+
+async def save_force_sub_channels(session, channels_list: list[dict]):
+    res = await session.execute(select(BotSetting).where(BotSetting.key == "force_sub_channels"))
+    s = res.scalar_one_or_none()
+    val = json.dumps(channels_list)
+    if not s:
+        session.add(BotSetting(key="force_sub_channels", value=val))
+    else:
+        s.value = val
 
 
 @router.get("/login", response_class=templates.TemplateResponse)
@@ -57,19 +77,14 @@ async def admin_dashboard(request: Request):
     return templates.TemplateResponse(request, "dashboard.html", {"stats": stats, "active": "dashboard"})
 
 
-# ── Settings (Toggle Search & Force Sub) ──────────
+# ── Settings (Toggle Search & Multiple Force Sub) ──────────
 
 @router.get("/settings", dependencies=[Depends(verify_admin)], response_class=templates.TemplateResponse)
 async def admin_settings(request: Request):
     async with get_session() as session:
         search_setting = await session.execute(select(BotSetting).where(BotSetting.key == "search_enabled"))
         search_setting = search_setting.scalar_one_or_none()
-        
-        fs_id_setting = await session.execute(select(BotSetting).where(BotSetting.key == "force_sub_channel_id"))
-        fs_id_setting = fs_id_setting.scalar_one_or_none()
-        
-        fs_link_setting = await session.execute(select(BotSetting).where(BotSetting.key == "force_sub_invite_link"))
-        fs_link_setting = fs_link_setting.scalar_one_or_none()
+        channels = await get_force_sub_channels(session)
     
     search_enabled = True
     if search_setting and search_setting.value == "false":
@@ -77,23 +92,15 @@ async def admin_settings(request: Request):
         
     return templates.TemplateResponse(request, "settings.html", {
         "search_enabled": search_enabled, 
-        "active": "settings",
-        "fs_id": fs_id_setting.value if fs_id_setting else "",
-        "fs_link": fs_link_setting.value if fs_link_setting else ""
+        "channels": channels,
+        "active": "settings"
     })
 
 
 @router.post("/settings", dependencies=[Depends(verify_admin)])
-async def admin_settings_post(
-    request: Request, 
-    search_enabled: str = Form("off"), 
-    force_sub_channel_id: str = Form(""), 
-    force_sub_invite_link: str = Form("")
-):
+async def admin_settings_post(request: Request, search_enabled: str = Form("off")):
     search_val = "true" if search_enabled == "on" else "false"
-    
     async with get_session() as session:
-        # Update Search
         s_setting = await session.execute(select(BotSetting).where(BotSetting.key == "search_enabled"))
         s_setting = s_setting.scalar_one_or_none()
         if not s_setting:
@@ -101,22 +108,25 @@ async def admin_settings_post(
         else:
             s_setting.value = search_val
             
-        # Update Force Sub ID
-        id_setting = await session.execute(select(BotSetting).where(BotSetting.key == "force_sub_channel_id"))
-        id_setting = id_setting.scalar_one_or_none()
-        if not id_setting:
-            session.add(BotSetting(key="force_sub_channel_id", value=force_sub_channel_id))
-        else:
-            id_setting.value = force_sub_channel_id
-            
-        # Update Force Sub Link
-        link_setting = await session.execute(select(BotSetting).where(BotSetting.key == "force_sub_invite_link"))
-        link_setting = link_setting.scalar_one_or_none()
-        if not link_setting:
-            session.add(BotSetting(key="force_sub_invite_link", value=force_sub_invite_link))
-        else:
-            link_setting.value = force_sub_invite_link
-            
+    return RedirectResponse(url="/admin/settings", status_code=303)
+
+
+@router.post("/settings/fs_add", dependencies=[Depends(verify_admin)])
+async def admin_settings_fs_add(channel_id: str = Form(...), invite_link: str = Form(...)):
+    async with get_session() as session:
+        channels = await get_force_sub_channels(session)
+        channels.append({"id": channel_id.strip(), "link": invite_link.strip()})
+        await save_force_sub_channels(session, channels)
+    return RedirectResponse(url="/admin/settings", status_code=303)
+
+
+@router.post("/settings/fs_delete/{index}", dependencies=[Depends(verify_admin)])
+async def admin_settings_fs_delete(index: int):
+    async with get_session() as session:
+        channels = await get_force_sub_channels(session)
+        if 0 <= index < len(channels):
+            channels.pop(index)
+            await save_force_sub_channels(session, channels)
     return RedirectResponse(url="/admin/settings", status_code=303)
 
 
@@ -133,7 +143,6 @@ async def admin_broadcast_post(message: str = Form(...)):
         result = await session.execute(select(User.telegram_id).where(User.is_banned == False))
         user_ids = result.scalars().all()
 
-    # Run broadcast in background so the web page doesn't timeout
     asyncio.create_task(_web_background_bcast(message, user_ids))
     return RedirectResponse(url="/admin/broadcast?status=started", status_code=303)
 
