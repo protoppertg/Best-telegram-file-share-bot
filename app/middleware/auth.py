@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any, Awaitable, Callable
 
 from aiogram import BaseMiddleware
@@ -15,6 +16,15 @@ from app.services.user import get_or_create_user, reset_daily_counts_if_needed
 from app.utils.logger import logger
 
 
+async def get_force_sub_channels(session) -> list[dict]:
+    res = await session.execute(select(BotSetting).where(BotSetting.key == "force_sub_channels"))
+    s = res.scalar_one_or_none()
+    if s and s.value:
+        try: return json.loads(s.value)
+        except: return []
+    return []
+
+
 class AuthMiddleware(BaseMiddleware):
     async def __call__(self, handler: Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]], event: TelegramObject, data: dict[str, Any]) -> Any:
         tg_user = data.get("event_from_user")
@@ -26,38 +36,35 @@ class AuthMiddleware(BaseMiddleware):
                 user = await get_or_create_user(session, telegram_id=tg_user.id, username=tg_user.username, first_name=tg_user.first_name, last_name=tg_user.last_name)
                 await reset_daily_counts_if_needed(session, user)
                 
-                # ── Ban Check ──────────────────────────
                 if user.is_banned:
                     if isinstance(event, CallbackQuery):
                         await event.answer("You are banned from using this bot.", show_alert=True)
                     elif isinstance(event, Message):
                         await bot.send_message(tg_user.id, "🚫 You have been banned from using this bot.")
-                    return  # Stop processing entirely
+                    return
                 
-                # ── Force Sub Check ──────────────────────
-                fs_id_setting = await session.execute(select(BotSetting).where(BotSetting.key == "force_sub_channel_id"))
-                fs_id_setting = fs_id_setting.scalar_one_or_none()
-                
-                if fs_id_setting and fs_id_setting.value:
-                    try:
-                        chat_id = int(fs_id_setting.value)
-                        member = await bot.get_chat_member(chat_id=chat_id, user_id=tg_user.id)
-                        if member.status in ["left", "kicked"]:
-                            fs_link_setting = await session.execute(select(BotSetting).where(BotSetting.key == "force_sub_invite_link"))
-                            fs_link_setting = fs_link_setting.scalar_one_or_none()
-                            invite_link = fs_link_setting.value if fs_link_setting and fs_link_setting.value else "https://t.me"
-                            
-                            kb = InlineKeyboardMarkup(inline_keyboard=[
-                                [InlineKeyboardButton(text="📢 Join Channel", url=invite_link)],
-                                [InlineKeyboardButton(text="✅ I Joined", callback_data="check_sub")]
-                            ])
-                            
-                            if isinstance(event, CallbackQuery):
-                                await event.answer("You must join the channel first!", show_alert=True)
-                            await bot.send_message(tg_user.id, "⚠️ You must join our channel to use this bot!", reply_markup=kb)
-                            return
-                    except Exception as e:
-                        logger.error("force_sub_check_error", error=str(e))
+                channels = await get_force_sub_channels(session)
+                if channels:
+                    missing_channels = []
+                    for ch in channels:
+                        try:
+                            member = await bot.get_chat_member(chat_id=ch['id'], user_id=tg_user.id)
+                            if member.status in ["left", "kicked"]:
+                                missing_channels.append(ch)
+                        except Exception as e:
+                            logger.error("force_sub_check_error", channel=ch.get('id'), error=str(e))
+                    
+                    if missing_channels:
+                        kb = InlineKeyboardBuilder()
+                        for ch in missing_channels:
+                            kb.button(text=f"📢 Join Channel", url=ch['link'])
+                        kb.button(text="✅ I Joined", callback_data="check_sub")
+                        kb.adjust(1)
+                        
+                        if isinstance(event, CallbackQuery):
+                            await event.answer("You must join the channels first!", show_alert=True)
+                        await bot.send_message(tg_user.id, "⚠️ You must join our channels to use this bot!", reply_markup=kb.as_markup())
+                        return
 
             data["db_user"] = user
         except Exception as exc:
