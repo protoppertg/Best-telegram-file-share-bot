@@ -112,7 +112,6 @@ async def admin_settings_post(
     protect_forwarding: str = Form("off")
 ):
     async with get_session() as session:
-        # Search
         s_val = "true" if search_enabled == "on" else "false"
         s_setting = await session.execute(select(BotSetting).where(BotSetting.key == "search_enabled"))
         s_setting = s_setting.scalar_one_or_none()
@@ -121,7 +120,6 @@ async def admin_settings_post(
         else:
             s_setting.value = s_val
             
-        # Auto-Delete
         ad_val = "true" if auto_delete_enabled == "on" else "false"
         ad_setting = await session.execute(select(BotSetting).where(BotSetting.key == "auto_delete_enabled"))
         ad_setting = ad_setting.scalar_one_or_none()
@@ -138,7 +136,6 @@ async def admin_settings_post(
         else:
             secs_setting.value = seconds_val
             
-        # Protect Forwarding
         pf_val = "true" if protect_forwarding == "on" else "false"
         pf_setting = await session.execute(select(BotSetting).where(BotSetting.key == "protect_forwarding"))
         pf_setting = pf_setting.scalar_one_or_none()
@@ -249,7 +246,7 @@ async def admin_delete_doc(doc_id: int):
     return Response(status_code=200)
 
 
-# ── Users ─────────────────────────────────────────
+# ── Users (List & Profile/Chat) ──────────────────
 
 @router.get("/users", dependencies=[Depends(verify_admin)], response_class=templates.TemplateResponse)
 async def admin_users(request: Request, page: int = 1, q: Optional[str] = None):
@@ -265,31 +262,52 @@ async def admin_users(request: Request, page: int = 1, q: Optional[str] = None):
     return templates.TemplateResponse(request, "users.html", {"users": users, "page": page, "total_pages": total_pages, "q": q, "active": "users"})
 
 
+@router.get("/users/{telegram_id}", dependencies=[Depends(verify_admin)], response_class=templates.TemplateResponse)
+async def admin_user_profile(request: Request, telegram_id: int):
+    async with get_session() as session:
+        user = await session.execute(select(User).where(User.telegram_id == telegram_id))
+        user = user.scalar_one_or_none()
+        
+    if not user:
+        return RedirectResponse(url="/admin/users", status_code=303)
+        
+    return templates.TemplateResponse(request, "user_profile.html", {"u": user, "active": "users"})
+
+
+@router.post("/users/{telegram_id}/send_message", dependencies=[Depends(verify_admin)])
+async def admin_send_dm(telegram_id: int, message: str = Form(...)):
+    try:
+        await bot.send_message(telegram_id, message)
+    except Exception as e:
+        logger.error("web_dm_failed", user_id=telegram_id, error=str(e))
+    return RedirectResponse(url=f"/admin/users/{telegram_id}?status=sent", status_code=303)
+
+
 @router.post("/users/{telegram_id}/grant_premium", dependencies=[Depends(verify_admin)])
 async def admin_grant_premium(telegram_id: int, days: int = Form(30)):
     await user_service.activate_premium(telegram_id, days)
-    return Response(status_code=200)
+    return RedirectResponse(url=f"/admin/users/{telegram_id}", status_code=303)
 
 
 @router.post("/users/{telegram_id}/revoke_premium", dependencies=[Depends(verify_admin)])
 async def admin_revoke_premium(telegram_id: int):
     await user_service.revoke_premium(telegram_id)
-    return Response(status_code=200)
+    return RedirectResponse(url=f"/admin/users/{telegram_id}", status_code=303)
 
 
 @router.post("/users/{telegram_id}/ban", dependencies=[Depends(verify_admin)])
 async def admin_ban_user(telegram_id: int):
     await user_service.ban_user(telegram_id)
-    return Response(status_code=200)
+    return RedirectResponse(url=f"/admin/users/{telegram_id}", status_code=303)
 
 
 @router.post("/users/{telegram_id}/unban", dependencies=[Depends(verify_admin)])
 async def admin_unban_user(telegram_id: int):
     await user_service.unban_user(telegram_id)
-    return Response(status_code=200)
+    return RedirectResponse(url=f"/admin/users/{telegram_id}", status_code=303)
 
 
 @router.post("/users/{telegram_id}/reset_search", dependencies=[Depends(verify_admin)])
 async def admin_reset_search(telegram_id: int):
     await user_service.reset_search_count(telegram_id)
-    return Response(status_code=200)
+    return RedirectResponse(url=f"/admin/users/{telegram_id}", status_code=303)
