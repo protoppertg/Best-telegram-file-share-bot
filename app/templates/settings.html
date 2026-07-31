@@ -15,21 +15,44 @@
             <span class="ms-3 text-sm font-medium text-gray-900">Enable Search Feature</span>
         </div>
         <p class="text-gray-500 text-sm mb-4">If turned off, users will not be able to search for files.</p>
-        
-        <hr class="my-6 border-gray-200">
+        <button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">Save Search Setting</button>
+    </form>
+</div>
 
-        <h2 class="text-xl font-bold mb-4">Force Sub Settings</h2>
-        <div class="mb-4">
+<div class="bg-white p-6 rounded-lg shadow max-w-2xl">
+    <h2 class="text-xl font-bold mb-4">Force Sub Channels</h2>
+    
+    {% if channels %}
+    <div class="mb-6 space-y-2">
+        {% for ch in channels %}
+        <div class="flex items-center justify-between bg-gray-50 p-3 rounded border">
+            <div>
+                <p class="font-medium text-sm text-gray-700">ID: {{ ch.id }}</p>
+                <p class="text-sm text-blue-600 truncate">{{ ch.link }}</p>
+            </div>
+            <form method="POST" action="/admin/settings/fs_delete/{{ loop.index0 }}">
+                <button type="submit" class="text-red-600 hover:text-red-900"><i class="fas fa-trash"></i></button>
+            </form>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <p class="text-gray-500 text-sm mb-4">No channels added yet. Users can use the bot freely.</p>
+    {% endif %}
+
+    <hr class="my-4 border-gray-200">
+
+    <h3 class="text-lg font-bold mb-4">Add New Channel</h3>
+    <form method="POST" action="/admin/settings/fs_add" class="space-y-3">
+        <div>
             <label class="block text-gray-700 text-sm font-bold mb-2">Channel ID (e.g., -1001234567890)</label>
-            <input type="text" name="force_sub_channel_id" value="{{ fs_id }}" class="w-full border p-2 rounded focus:outline-none focus:ring-2 focus:ring-blue-600">
+            <input type="text" name="channel_id" required class="w-full border p-2 rounded focus:outline-none focus:ring-2 focus:ring-blue-600">
         </div>
-        <div class="mb-4">
+        <div>
             <label class="block text-gray-700 text-sm font-bold mb-2">Invite Link (e.g., https://t.me/+abc)</label>
-            <input type="text" name="force_sub_invite_link" value="{{ fs_link }}" class="w-full border p-2 rounded focus:outline-none focus:ring-2 focus:ring-blue-600">
+            <input type="text" name="invite_link" required class="w-full border p-2 rounded focus:outline-none focus:ring-2 focus:ring-blue-600">
         </div>
-        <p class="text-gray-500 text-sm mb-4">Leave blank to disable Force Sub.</p>
-
-        <button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">Save Settings</button>
+        <button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">Add Channel</button>
     </form>
 </div>
 {% endblock %}
