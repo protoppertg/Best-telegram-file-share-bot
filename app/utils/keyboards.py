@@ -8,6 +8,15 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from app.config import settings
+def main_menu_kb() -> ReplyKeyboardMarkup:
+    """The persistent bottom keyboard for users."""
+    kb = ReplyKeyboardBuilder()
+    kb.button(text="🔍 Search")
+    kb.button(text="📤 Upload")
+    kb.button(text="🎟️ Premium")
+    kb.button(text="❓ Help")
+    kb.adjust(2)
+    return kb.as_markup(resize_keyboard=True)
 
 def search_results_keyboard(results: List, query_key: str, page: int, total_pages: int) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
