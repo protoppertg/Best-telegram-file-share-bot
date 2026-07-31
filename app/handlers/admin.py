@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from html import escape
 from aiogram import Bot, F, Router
 from aiogram.filters import BaseFilter, Command, CommandObject
@@ -24,7 +25,6 @@ router = Router()
 
 class AdminFilter(BaseFilter):
     async def __call__(self, message: Message) -> bool:
-        # Allow channel posts to bypass the admin check
         if message.chat.type == "channel":
             return True
         return message.from_user and message.from_user.id in settings.admin_ids_list
@@ -43,6 +43,28 @@ class BroadcastStates(StatesGroup):
 class DirectMessageStates(StatesGroup):
     waiting_message = State()
 
+
+# ── Helpers for Force Sub JSON ──────────────────
+
+async def get_force_sub_channels(session) -> list[dict]:
+    res = await session.execute(select(BotSetting).where(BotSetting.key == "force_sub_channels"))
+    s = res.scalar_one_or_none()
+    if s and s.value:
+        try: return json.loads(s.value)
+        except: return []
+    return []
+
+async def save_force_sub_channels(session, channels_list: list[dict]):
+    res = await session.execute(select(BotSetting).where(BotSetting.key == "force_sub_channels"))
+    s = res.scalar_one_or_none()
+    val = json.dumps(channels_list)
+    if not s:
+        session.add(BotSetting(key="force_sub_channels", value=val))
+    else:
+        s.value = val
+
+
+# ── Keyboards ───────────────────────────────────
 
 def admin_menu_kb():
     from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -117,6 +139,8 @@ def admin_doc_actions_kb(doc_id: int, approved: bool):
     kb.adjust(1)
     return kb.as_markup()
 
+
+# ── Main Menu & Stats ────────────────────────────
 
 @router.message(Command("admin"))
 async def cmd_admin(message: Message, state: FSMContext):
@@ -197,26 +221,22 @@ async def _background_bcast(bot: Bot, admin_chat_id: int, message_id: int, user_
         reply_markup=admin_menu_kb()
     )
 
-# ── Force Sub Settings ────────────────────────────
+# ── Force Sub Settings (Multiple Channels) ────────
 
 @router.callback_query(F.data == "adm:fs")
 async def cb_admin_fs(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
     async with get_session() as session:
-        id_setting = await session.execute(select(BotSetting).where(BotSetting.key == "force_sub_channel_id"))
-        id_setting = id_setting.scalar_one_or_none()
-        link_setting = await session.execute(select(BotSetting).where(BotSetting.key == "force_sub_invite_link"))
-        link_setting = link_setting.scalar_one_or_none()
+        channels = await get_force_sub_channels(session)
         
-    current_id = id_setting.value if id_setting and id_setting.value else "Not set"
-    current_link = link_setting.value if link_setting and link_setting.value else "Not set"
-    
-    text = (
-        "⚙️ <b>Force Sub Settings</b>\n\n"
-        f"Current Channel ID: <code>{current_id}</code>\n"
-        f"Current Invite Link: {current_link}\n\n"
-        "1. Send /cancel to abort.\n"
-        "2. Send the new Channel ID (e.g., -1001234567890) to update."
-    )
+    if not channels:
+        text = "⚙️ <b>Force Sub Settings</b>\n\nNo channels added yet.\n\n1. Send /cancel to abort.\n2. Send a new Channel ID (e.g., -1001234567890) to add."
+    else:
+        text = "⚙️ <b>Force Sub Settings</b>\n\nCurrent Channels:\n"
+        for ch in channels:
+            text += f"• <code>{ch['id']}</code> - {ch['link']}\n"
+        text += "\n1. Send /cancel to abort.\n2. Send a new Channel ID to add.\n3. Send /clear to remove all channels."
+
     await state.set_state(ForceSubStates.waiting_channel_id)
     await callback.message.edit_text(text)
     await callback.answer()
@@ -241,22 +261,19 @@ async def fs_invite_link(message: Message, state: FSMContext):
     channel_id = data["channel_id"]
     
     async with get_session() as session:
-        id_setting = await session.execute(select(BotSetting).where(BotSetting.key == "force_sub_channel_id"))
-        id_setting = id_setting.scalar_one_or_none()
-        if not id_setting:
-            session.add(BotSetting(key="force_sub_channel_id", value=channel_id))
-        else:
-            id_setting.value = channel_id
-            
-        link_setting = await session.execute(select(BotSetting).where(BotSetting.key == "force_sub_invite_link"))
-        link_setting = link_setting.scalar_one_or_none()
-        if not link_setting:
-            session.add(BotSetting(key="force_sub_invite_link", value=link))
-        else:
-            link_setting.value = link
+        channels = await get_force_sub_channels(session)
+        channels.append({"id": channel_id, "link": link})
+        await save_force_sub_channels(session, channels)
 
     await state.clear()
-    await message.answer("✅ Force Sub settings updated!", reply_markup=admin_menu_kb())
+    await message.answer("✅ Force Sub channel added!", reply_markup=admin_menu_kb())
+
+@router.message(ForceSubStates.waiting_channel_id, Command("clear"))
+async def fs_clear(message: Message, state: FSMContext):
+    await state.clear()
+    async with get_session() as session:
+        await save_force_sub_channels(session, [])
+    await message.answer("🗑 All Force Sub channels cleared.", reply_markup=admin_menu_kb())
 
 # ── Auto-Index Channel Posts ─────────────────────
 
