@@ -6,7 +6,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import ErrorEvent, Update
+from aiogram.types import BotCommand, ErrorEvent, Update
 
 from app.config import settings
 from app.utils.logger import logger
@@ -44,6 +44,17 @@ def setup_dispatcher(dispatcher: Dispatcher = dp) -> None:
 
 
 async def on_startup() -> None:
+    # Register the command menu (the list that appears when you type /)
+    commands = [
+        BotCommand(command="/start", description="🚀 Start the bot"),
+        BotCommand(command="/usage", description="📊 Check your usage limits"),
+        BotCommand(command="/about", description="ℹ️ About PrepCore"),
+        BotCommand(command="/premium", description="🎟️ View Premium status"),
+        BotCommand(command="/cancel", description="❌ Cancel current action"),
+        BotCommand(command="/admin", description="🔧 Admin Panel (Admins only)"),
+    ]
+    await bot.set_my_commands(commands)
+
     if settings.USE_POLLING:
         await bot.delete_webhook(drop_pending_updates=True)
         logger.info("polling_mode_started")
