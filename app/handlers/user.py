@@ -11,10 +11,11 @@ from aiogram.filters import Command, CommandObject, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message
+from sqlalchemy import select
 
 from app.config import settings
 from app.database import get_session
-from app.models import User
+from app.models import BotSetting, User
 from app.services import user as user_service
 from app.services import document as doc_service
 from app.services.search import search_documents
@@ -126,7 +127,6 @@ async def cmd_search(message: Message, command: CommandObject, db_user: User | N
 @router.message(StateFilter(None), F.text & ~F.text.startswith("/"))
 async def text_search(message: Message, db_user: User | None = None):
     query = message.text.strip()
-    # Ignore if the user tapped a menu button that doesn't match exact text
     if query in ["🔍 Search", "📤 Upload", "🎟️ Premium", "❓ Help"]:
         return
     if not is_valid_search_query(query):
@@ -136,13 +136,20 @@ async def text_search(message: Message, db_user: User | None = None):
 
 
 async def _perform_search(message: Message, query: str, db_user: User | None, page: int) -> None:
-    if db_user:
-        if not await user_service.check_search_limit(db_user):
-            limit = await user_service.get_user_search_limit(db_user)
-            await message.answer(f"⛔ <b>Daily search limit reached ({limit}/{limit})</b>")
+    async with get_session() as session:
+        # ── Check if Search is Disabled ──────────
+        setting = await session.execute(select(BotSetting).where(BotSetting.key == "search_enabled"))
+        setting = setting.scalar_one_or_none()
+        if setting and setting.value == "false":
+            await message.answer("🚫 <b>Search is temporarily disabled by the admin.</b>\nPlease try again later.")
             return
 
-    async with get_session() as session:
+        if db_user:
+            if not await user_service.check_search_limit(db_user):
+                limit = await user_service.get_user_search_limit(db_user)
+                await message.answer(f"⛔ <b>Daily search limit reached ({limit}/{limit})</b>")
+                return
+
         results, total = await search_documents(session, query, page=page)
         if db_user:
             await user_service.increment_search_count(session, db_user.telegram_id)
