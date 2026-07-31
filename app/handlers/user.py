@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from html import escape
 from typing import Any
 
 from aiogram import Bot, F, Router
@@ -39,7 +40,7 @@ class UploadStates(StatesGroup):
 @router.message(Command("start"))
 async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
-    await message.answer("👋 <b>Welcome to PrepCore!</b>\n\nSend /search <query> or just type what you're looking for!\n\nYou can also send a PDF to support the library.")
+    await message.answer("👋 <b>Welcome to PrepCore!</b>\n\nSend /search \"query\" or just type what you're looking for!\n\nYou can also send a PDF to support the library.")
 
 
 @router.message(Command("help"))
@@ -79,7 +80,7 @@ async def _perform_search(message: Message, query: str, db_user: User | None, pa
             await user_service.log_search(session, db_user.id, query, total)
 
     if not results:
-        await message.answer(f"🔍 No results found for <b>{sanitise_text(query, 100)}</b>.")
+        await message.answer(f"🔍 No results found for <b>{escape(sanitise_text(query, 100))}</b>.")
         return
 
     query_key = uuid.uuid4().hex[:8]
@@ -89,7 +90,7 @@ async def _perform_search(message: Message, query: str, db_user: User | None, pa
     per_page = settings.SEARCH_RESULTS_PER_PAGE
     total_pages = max(1, (total + per_page - 1) // per_page)
 
-    text = f"🔍 <b>Search: {sanitise_text(query, 100)}</b>\n📊 Found <b>{total}</b> result(s) — Page {page}/{total_pages}\n\nTap a file to download:"
+    text = f"🔍 <b>Search: {escape(sanitise_text(query, 100))}</b>\n📊 Found <b>{total}</b> result(s) — Page {page}/{total_pages}\n\nTap a file to download:"
     await message.answer(text, reply_markup=search_results_keyboard(results, query_key, page, total_pages))
 
 
@@ -110,7 +111,7 @@ async def handle_document_upload(message: Message, state: FSMContext, db_user: U
     original_name = message.document.file_name or "document.pdf"
     await state.update_data(original_file_id=message.document.file_id, original_file_name=original_name, file_size=message.document.file_size)
     await state.set_state(UploadStates.waiting_file_name)
-    await message.answer(f"📤 <b>Upload Started</b>\n\nFile: <code>{sanitise_text(original_name, 100)}</code>\n\nEnter a <b>file name</b> (or send /skip to use the original name):")
+    await message.answer(f"📤 <b>Upload Started</b>\n\nFile: <code>{escape(sanitise_text(original_name, 100))}</code>\n\nEnter a <b>file name</b> (or send /skip to use the original name):")
 
 
 @router.message(UploadStates.waiting_file_name, F.text)
@@ -220,9 +221,9 @@ async def upload_keywords(message: Message, state: FSMContext, bot: Bot, db_user
         if db_user: await user_service.increment_upload_count(session, db_user)
 
     if approved:
-        await status_msg.edit_text(f"✅ <b>Upload Successful!</b>\n\n📁 {sanitise_text(doc.file_name, 100)}\n\nThank you for supporting the library! 🙏")
+        await status_msg.edit_text(f"✅ <b>Upload Successful!</b>\n\n📁 {escape(sanitise_text(doc.file_name, 100))}\n\nThank you for supporting the library! 🙏")
     else:
-        await status_msg.edit_text(f"⏳ <b>Upload Received — Pending Approval</b>\n\n📁 {sanitise_text(doc.file_name, 100)}\n\nYour file is awaiting admin approval.")
+        await status_msg.edit_text(f"⏳ <b>Upload Received — Pending Approval</b>\n\n📁 {escape(sanitise_text(doc.file_name, 100))}\n\nYour file is awaiting admin approval.")
         for admin_id in settings.admin_ids_list:
             try: await bot.send_message(admin_id, f"⏳ <b>New pending upload</b>\nDoc ID: {doc.id}\nUse /admin to approve.")
             except Exception: pass
