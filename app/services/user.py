@@ -56,13 +56,19 @@ async def check_search_limit(user: User) -> bool:
 async def check_upload_limit(user: User) -> bool:
     return user.upload_count < await get_user_upload_limit(user)
 
-async def increment_search_count(session: AsyncSession, user: User) -> None:
-    user.search_count += 1
-    await session.flush()
+async def increment_search_count(session: AsyncSession, telegram_id: int) -> None:
+    result = await session.execute(select(User).where(User.telegram_id == telegram_id))
+    user = result.scalar_one_or_none()
+    if user:
+        user.search_count += 1
+        await session.flush()
 
-async def increment_upload_count(session: AsyncSession, user: User) -> None:
-    user.upload_count += 1
-    await session.flush()
+async def increment_upload_count(session: AsyncSession, telegram_id: int) -> None:
+    result = await session.execute(select(User).where(User.telegram_id == telegram_id))
+    user = result.scalar_one_or_none()
+    if user:
+        user.upload_count += 1
+        await session.flush()
 
 
 async def activate_premium(telegram_id: int, duration_days: int) -> bool:
@@ -85,6 +91,26 @@ async def revoke_premium(telegram_id: int) -> bool:
         if not user: return False
         user.is_premium = False
         user.premium_expiry = None
+        await session.flush()
+        return True
+
+async def ban_user(telegram_id: int) -> bool:
+    from app.database import get_session
+    async with get_session() as session:
+        result = await session.execute(select(User).where(User.telegram_id == telegram_id))
+        user = result.scalar_one_or_none()
+        if not user: return False
+        user.is_banned = True
+        await session.flush()
+        return True
+
+async def unban_user(telegram_id: int) -> bool:
+    from app.database import get_session
+    async with get_session() as session:
+        result = await session.execute(select(User).where(User.telegram_id == telegram_id))
+        user = result.scalar_one_or_none()
+        if not user: return False
+        user.is_banned = False
         await session.flush()
         return True
 
