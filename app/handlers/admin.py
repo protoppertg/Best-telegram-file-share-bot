@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from html import escape
 from aiogram import Bot, F, Router
 from aiogram.filters import BaseFilter, Command, CommandObject
 from aiogram.fsm.context import FSMContext
@@ -190,11 +191,18 @@ async def fs_invite_link(message: Message, state: FSMContext):
 
 # ── Auto-Index Channel Posts ─────────────────────
 
-@router.channel_post(F.chat.id == int(settings.CHANNEL_ID), F.document)
+@router.channel_post(F.document)
 async def auto_index_channel_post(message: Message, bot: Bot):
     """Automatically indexes files dropped directly into the storage channel."""
     
-    # Prevent duplicate indexing if the bot forwarded this from a user upload
+    try:
+        target_channel = int(settings.CHANNEL_ID)
+    except (ValueError, TypeError):
+        return 
+
+    if message.chat.id != target_channel:
+        return
+
     if message.caption and message.caption.startswith("📤 Uploaded by:"):
         return
 
@@ -203,7 +211,6 @@ async def auto_index_channel_post(message: Message, bot: Bot):
     message_id = message.id
 
     async with get_session() as session:
-        # Double check it doesn't exist already
         result = await session.execute(select(Document).where(Document.file_id == file_id))
         if result.scalar_one_or_none():
             return
@@ -218,13 +225,12 @@ async def auto_index_channel_post(message: Message, bot: Bot):
             approved=True
         )
 
-    # Notify admins so they can edit the metadata
     for admin_id in settings.admin_ids_list:
         try:
             await bot.send_message(
                 admin_id,
                 f"📥 <b>Auto-Indexed File</b>\n\n"
-                f"📁 Name: <code>{file_name}</code>\n"
+                f"📁 Name: <code>{escape(file_name)}</code>\n"
                 f"🆔 ID: {doc.id}\n\n"
                 f"Use the command below to update its metadata so users can find it:\n"
                 f"<code>/edit_doc {doc.id} subject=Physics category=PYQ year=2023</code>"
@@ -236,10 +242,10 @@ async def auto_index_channel_post(message: Message, bot: Bot):
 
 @router.message(Command("edit_doc"))
 async def cmd_edit_doc(message: Message, command: CommandObject):
-    """Edit metadata of a document. Usage: /edit_doc <id> <field>=<value>"""
+    """Edit metadata of a document. Usage: /edit_doc [id] [field]=[value]"""
     if not command.args:
         await message.answer(
-            "Usage: <code>/edit_doc &lt;id&gt; &lt;field&gt;=&lt;value&gt;</code>\n\n"
+            "Usage: <code>/edit_doc [id] [field]=[value]</code>\n\n"
             "Fields: file_name, subject, category, university, semester, year, keywords\n\n"
             "Example: <code>/edit_doc 42 subject=Physics category=PYQ year=2023</code>"
         )
@@ -311,8 +317,8 @@ async def cb_admin_user_actions(callback: CallbackQuery):
         text = (
             f"👤 <b>User Profile</b>\n\n"
             f"🆔 ID: <code>{user.telegram_id}</code>\n"
-            f"👤 Name: {user.first_name or 'N/A'}\n"
-            f" USERNAME: @{user.username or 'N/A'}\n\n"
+            f"👤 Name: {escape(user.first_name or 'N/A')}\n"
+            f" USERNAME: @{escape(user.username or 'N/A')}\n\n"
             f"📊 Search Count: {user.search_count}\n"
             f"📤 Upload Count: {user.upload_count}\n"
             f"🎟️ Premium: {prem_status}"
@@ -374,9 +380,9 @@ async def cb_admin_doc_actions(callback: CallbackQuery, bot: Bot):
         text = (
             f"📄 <b>Document Details</b>\n\n"
             f"🆔 ID: <code>{doc.id}</code>\n"
-            f"📁 Name: {sanitise_text(doc.file_name, 100)}\n"
-            f"📚 Subject: {doc.subject or 'N/A'}\n"
-            f"🏷️ Category: {doc.category or 'N/A'}\n"
+            f"📁 Name: {escape(sanitise_text(doc.file_name, 100))}\n"
+            f"📚 Subject: {escape(doc.subject or 'N/A')}\n"
+            f"🏷️ Category: {escape(doc.category or 'N/A')}\n"
             f"✅ Approved: {'Yes' if doc.approved else 'No'}\n"
         )
         await callback.message.edit_text(text, reply_markup=admin_doc_actions_kb(doc.id, doc.approved))
