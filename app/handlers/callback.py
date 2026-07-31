@@ -1,15 +1,18 @@
-"""Inline button callback handlers: get file, pagination, new search."""
+"""Inline button callback handlers: get file, pagination, new search, auto-delete, protect content."""
 
 from __future__ import annotations
 
+import asyncio
+from html import escape
 from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import CallbackQuery, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from sqlalchemy import select
 
 from app.config import settings
 from app.database import get_session
-from app.models import User
+from app.models import BotSetting, User
 from app.services import document as doc_service
 from app.services.cache import get_cache
 from app.services.search import search_documents
@@ -20,6 +23,38 @@ from app.utils.logger import logger
 from app.utils.validators import sanitise_text
 
 router = Router()
+
+
+async def _get_settings(session) -> dict:
+    """Fetch all bot settings in one go."""
+    result = await session.execute(select(BotSetting))
+    settings_rows = result.scalars().all()
+    
+    data = {
+        "auto_delete_enabled": False,
+        "auto_delete_seconds": 3600,
+        "protect_forwarding": False
+    }
+    
+    for row in settings_rows:
+        if row.key == "auto_delete_enabled" and row.value == "true":
+            data["auto_delete_enabled"] = True
+        elif row.key == "auto_delete_seconds" and row.value.isdigit():
+            data["auto_delete_seconds"] = int(row.value)
+        elif row.key == "protect_forwarding" and row.value == "true":
+            data["protect_forwarding"] = True
+            
+    return data
+
+
+async def _schedule_auto_delete(bot: Bot, chat_id: int, message_id: int, delay: int):
+    """Background task to delete a message after a specified delay."""
+    try:
+        await asyncio.sleep(delay)
+        await bot.delete_message(chat_id=chat_id, message_id=message_id)
+        logger.info("auto_delete_success", chat_id=chat_id, message_id=message_id)
+    except Exception as e:
+        logger.warning("auto_delete_failed", chat_id=chat_id, error=str(e))
 
 
 @router.callback_query(F.data == "noop")
@@ -34,8 +69,31 @@ async def check_sub_callback(callback: CallbackQuery):
 
 @router.callback_query(F.data == "search_again")
 async def search_again(callback: CallbackQuery):
-    await callback.message.edit_text("🔍 <b>New Search</b>\n\nType your search query or use <code>/search &lt;query&gt;</code>")
+    await callback.message.edit_text("🔍 <b>New Search</b>\n\nType your search query or use <code>/search \"query\"</code>")
     await callback.answer()
+
+
+async def _send_file_to_user(bot: Bot, callback: CallbackQuery, doc, bot_settings: dict, query_key: str, page: int):
+    """Helper to send file and apply auto-delete and protect content."""
+    
+    is_ad_enabled = bot_settings["auto_delete_enabled"]
+    ad_seconds = bot_settings["auto_delete_seconds"]
+    protect = bot_settings["protect_forwarding"]
+    
+    sent_msg = await bot.send_document(
+        chat_id=callback.from_user.id, 
+        document=doc.file_id, 
+        protect_content=protect, # This disables forwarding/saving
+        caption=f"📄 <b>{escape(sanitise_text(doc.file_name, 100))}</b>\n📚 {escape(doc.subject or 'N/A')} | 🏷️ {escape(doc.category or 'N/A')}"
+    )
+
+    if is_ad_enabled and ad_seconds > 0:
+        asyncio.create_task(_schedule_auto_delete(bot, callback.from_user.id, sent_msg.message_id, ad_seconds))
+        await callback.message.answer(f"⏳ <i>This file will be automatically deleted from your chat in {ad_seconds} seconds to prevent piracy. Save it now if you need it.</i>")
+
+    try:
+        await callback.message.edit_text(f"✅ File sent: <b>{escape(sanitise_text(doc.file_name, 100))}</b>", reply_markup=after_file_keyboard(query_key, page))
+    except TelegramBadRequest: pass
 
 
 @router.callback_query(F.data.startswith("getfile:"))
@@ -50,6 +108,7 @@ async def get_file_callback(callback: CallbackQuery, bot: Bot, db_user: User | N
 
     async with get_session() as session:
         doc = await doc_service.get_document_by_id(session, doc_id)
+        bot_settings = await _get_settings(session)
 
     if not doc:
         await callback.answer("File not found.", show_alert=True)
@@ -77,15 +136,7 @@ async def get_file_callback(callback: CallbackQuery, bot: Bot, db_user: User | N
         return
 
     await callback.answer("📥 Sending file...")
-    success = await send_document_to_user(bot, chat_id=callback.from_user.id, file_id=doc.file_id, caption=f"📄 <b>{sanitise_text(doc.file_name, 100)}</b>\n📚 {doc.subject or 'N/A'} | 🏷️ {doc.category or 'N/A'}")
-
-    if not success:
-        await callback.message.answer("❌ Failed to send the file. It may have been removed from storage.")
-        return
-
-    try:
-        await callback.message.edit_text(f"✅ File sent: <b>{sanitise_text(doc.file_name, 100)}</b>", reply_markup=after_file_keyboard(query_key, page))
-    except TelegramBadRequest: pass
+    await _send_file_to_user(bot, callback, doc, bot_settings, query_key, page)
 
 
 @router.callback_query(F.data.startswith("dlfile:"))
@@ -97,17 +148,14 @@ async def dl_file_callback(callback: CallbackQuery, bot: Bot):
 
     async with get_session() as session:
         doc = await doc_service.get_document_by_id(session, doc_id)
+        bot_settings = await _get_settings(session)
 
-    await callback.answer("📥 Sending file...")
-    success = await send_document_to_user(bot, chat_id=callback.from_user.id, file_id=doc.file_id, caption=f"📄 <b>{sanitise_text(doc.file_name, 100)}</b>\n📚 {doc.subject or 'N/A'} | 🏷️ {doc.category or 'N/A'}")
-
-    if not success:
-        await callback.message.answer("❌ Failed to send the file. It may have been removed from storage.")
+    if not doc:
+        await callback.answer("File not found.", show_alert=True)
         return
 
-    try:
-        await callback.message.edit_text(f"✅ File sent: <b>{sanitise_text(doc.file_name, 100)}</b>", reply_markup=after_file_keyboard(query_key, page))
-    except TelegramBadRequest: pass
+    await callback.answer("📥 Sending file...")
+    await _send_file_to_user(bot, callback, doc, bot_settings, query_key, page)
 
 
 @router.callback_query(F.data.startswith("search:"))
@@ -136,7 +184,7 @@ async def search_pagination(callback: CallbackQuery):
 
     per_page = settings.SEARCH_RESULTS_PER_PAGE
     total_pages = max(1, (total + per_page - 1) // per_page)
-    text = f"🔍 <b>Search: {sanitise_text(query, 100)}</b>\n📊 Found <b>{total}</b> result(s) — Page {page}/{total_pages}\n\nTap a file to download:"
+    text = f"🔍 <b>Search: {escape(sanitise_text(query, 100))}</b>\n📊 Found <b>{total}</b> result(s) — Page {page}/{total_pages}\n\nTap a file to download:"
 
     try:
         await callback.message.edit_text(text, reply_markup=search_results_keyboard(results, query_key, page, total_pages))
