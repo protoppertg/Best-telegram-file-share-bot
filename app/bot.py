@@ -44,7 +44,6 @@ def setup_dispatcher(dispatcher: Dispatcher = dp) -> None:
 
 
 async def on_startup() -> None:
-    # Register the command menu (the list that appears when you type /)
     commands = [
         BotCommand(command="/start", description="🚀 Start the bot"),
         BotCommand(command="/usage", description="📊 Check your usage limits"),
@@ -59,7 +58,13 @@ async def on_startup() -> None:
         await bot.delete_webhook(drop_pending_updates=True)
         logger.info("polling_mode_started")
     else:
-        await bot.set_webhook(url=settings.webhook_full_url, secret_token=settings.WEBHOOK_SECRET or None, drop_pending_updates=True)
+        # Explicitly tell Telegram to send messages, channel posts, and callbacks!
+        await bot.set_webhook(
+            url=settings.webhook_full_url, 
+            secret_token=settings.WEBHOOK_SECRET or None, 
+            drop_pending_updates=True,
+            allowed_updates=["message", "channel_post", "callback_query"]
+        )
         logger.info("webhook_set", url=settings.webhook_full_url)
 
 
