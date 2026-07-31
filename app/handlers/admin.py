@@ -1,7 +1,8 @@
-"""Interactive Telegram Admin Panel & Auto-Indexer."""
+"""Interactive Telegram Admin Panel, Auto-Indexer, Broadcaster & DMs."""
 
 from __future__ import annotations
 
+import asyncio
 from html import escape
 from aiogram import Bot, F, Router
 from aiogram.filters import BaseFilter, Command, CommandObject
@@ -23,6 +24,8 @@ router = Router()
 
 class AdminFilter(BaseFilter):
     async def __call__(self, message: Message) -> bool:
+        if message.chat.type == "channel":
+            return True
         return message.from_user and message.from_user.id in settings.admin_ids_list
 
 router.message.filter(AdminFilter())
@@ -33,6 +36,12 @@ class ForceSubStates(StatesGroup):
     waiting_channel_id = State()
     waiting_invite_link = State()
 
+class BroadcastStates(StatesGroup):
+    waiting_message = State()
+
+class DirectMessageStates(StatesGroup):
+    waiting_message = State()
+
 
 def admin_menu_kb():
     from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -42,6 +51,7 @@ def admin_menu_kb():
     kb.button(text="📄 Documents", callback_data="adm:docs:1")
     kb.button(text="⏳ Pending", callback_data="adm:pend:1")
     kb.button(text="⚙️ Force Sub", callback_data="adm:fs")
+    kb.button(text="📢 Broadcast", callback_data="adm:bcast")
     kb.adjust(2)
     return kb.as_markup()
 
@@ -67,12 +77,15 @@ def admin_users_kb(users: list[User], page: int, total_pages: int):
     kb.button(text="🔙 Back to Menu", callback_data="adm:menu")
     return kb.as_markup()
 
-def admin_user_actions_kb(telegram_id: int, is_premium: bool):
+def admin_user_actions_kb(telegram_id: int, is_premium: bool, is_banned: bool):
     from aiogram.utils.keyboard import InlineKeyboardBuilder
     kb = InlineKeyboardBuilder()
     if is_premium: kb.button(text="❌ Revoke Premium", callback_data=f"adm:u:{telegram_id}:revoke")
     else: kb.button(text="⭐ Grant Premium (30d)", callback_data=f"adm:u:{telegram_id}:grant")
     kb.button(text="🔄 Reset Search Count", callback_data=f"adm:u:{telegram_id}:reset")
+    if is_banned: kb.button(text="✅ Unban User", callback_data=f"adm:u:{telegram_id}:unban")
+    else: kb.button(text="🚫 Ban User", callback_data=f"adm:u:{telegram_id}:ban")
+    kb.button(text="✉️ Send Message", callback_data=f"adm:u:{telegram_id}:msg")
     kb.button(text="🔙 Back to Users", callback_data="adm:users:1")
     kb.adjust(1)
     return kb.as_markup()
@@ -83,7 +96,8 @@ def admin_docs_kb(docs: list[Document], page: int, total_pages: int, prefix: str
     kb = InlineKeyboardBuilder()
     for d in docs:
         status = "⏳" if not d.approved else "✅"
-        kb.button(text=f"{status} {d.file_name[:40]}...", callback_data=f"adm:doc:{d.id}")
+        safe_name = d.file_name[:40] if d.file_name else "Untitled"
+        kb.button(text=f"{status} {safe_name}...", callback_data=f"adm:doc:{d.id}")
     kb.adjust(1)
     nav = []
     if page > 1: nav.append(InlineKeyboardButton(text="◀️ Prev", callback_data=f"{prefix}:{page - 1}"))
@@ -130,6 +144,60 @@ async def cb_admin_stats(callback: CallbackQuery):
     await callback.message.edit_text(text, reply_markup=admin_stats_kb())
     await callback.answer()
 
+# ── Broadcast Feature ─────────────────────────────
+
+@router.callback_query(F.data == "adm:bcast")
+async def cb_admin_bcast(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(BroadcastStates.waiting_message)
+    await callback.message.edit_text(
+        "📢 <b>Broadcast Message</b>\n\n"
+        "Send the message you want to broadcast to all users.\n"
+        "You can send text, photos, videos, or documents.\n\n"
+        "Send /cancel to abort."
+    )
+    await callback.answer()
+
+@router.message(BroadcastStates.waiting_message, Command("cancel"))
+async def cancel_bcast(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer("❌ Broadcast cancelled.", reply_markup=admin_menu_kb())
+
+@router.message(BroadcastStates.waiting_message)
+async def perform_bcast(message: Message, state: FSMContext, bot: Bot):
+    await state.clear()
+    
+    async with get_session() as session:
+        result = await session.execute(select(User.telegram_id))
+        user_ids = result.scalars().all()
+
+    total_users = len(user_ids)
+    await message.answer(f"⏳ <b>Broadcasting to {total_users} users...</b>\nThis may take a few minutes. I will notify you when it's done.")
+    
+    asyncio.create_task(_background_bcast(bot, message.chat.id, message.message_id, user_ids))
+
+async def _background_bcast(bot: Bot, admin_chat_id: int, message_id: int, user_ids: list[int]):
+    sent_count = 0
+    failed_count = 0
+
+    for uid in user_ids:
+        try:
+            await bot.copy_message(chat_id=uid, from_chat_id=admin_chat_id, message_id=message_id)
+            sent_count += 1
+            await asyncio.sleep(0.05)
+        except Exception:
+            failed_count += 1
+            
+    await bot.send_message(
+        admin_chat_id,
+        f"✅ <b>Broadcast Finished!</b>\n\n"
+        f"👥 Total Users: {len(user_ids)}\n"
+        f"✅ Sent Successfully: {sent_count}\n"
+        f"❌ Failed (blocked bot): {failed_count}",
+        reply_markup=admin_menu_kb()
+    )
+
+# ── Force Sub Settings ────────────────────────────
+
 @router.callback_query(F.data == "adm:fs")
 async def cb_admin_fs(callback: CallbackQuery, state: FSMContext):
     async with get_session() as session:
@@ -152,7 +220,7 @@ async def cb_admin_fs(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text(text)
     await callback.answer()
 
-@router.message(ForceSubStates.waiting_channel_id)
+@router.message(ForceSubStates.waiting_channel_id, F.text & ~F.text.startswith("/"))
 async def fs_channel_id(message: Message, state: FSMContext):
     channel_id = message.text.strip()
     if not channel_id.startswith("-100"):
@@ -162,7 +230,7 @@ async def fs_channel_id(message: Message, state: FSMContext):
     await state.set_state(ForceSubStates.waiting_invite_link)
     await message.answer("Now send the Invite Link (e.g., https://t.me/+abc123):")
 
-@router.message(ForceSubStates.waiting_invite_link)
+@router.message(ForceSubStates.waiting_invite_link, F.text & ~F.text.startswith("/"))
 async def fs_invite_link(message: Message, state: FSMContext):
     link = message.text.strip()
     if not link.startswith("https://t.me/"):
@@ -193,8 +261,6 @@ async def fs_invite_link(message: Message, state: FSMContext):
 
 @router.channel_post(F.document)
 async def auto_index_channel_post(message: Message, bot: Bot):
-    """Automatically indexes files dropped directly into the storage channel."""
-    
     try:
         target_channel = int(settings.CHANNEL_ID)
     except (ValueError, TypeError):
@@ -216,13 +282,8 @@ async def auto_index_channel_post(message: Message, bot: Bot):
             return
 
         doc = await doc_service.create_document(
-            session,
-            file_id=file_id,
-            message_id=message_id,
-            file_name=file_name,
-            subject="Uncategorized",
-            category="Uncategorized",
-            approved=True
+            session, file_id=file_id, message_id=message_id, file_name=file_name,
+            subject="Uncategorized", category="Uncategorized", approved=True
         )
 
     for admin_id in settings.admin_ids_list:
@@ -242,7 +303,6 @@ async def auto_index_channel_post(message: Message, bot: Bot):
 
 @router.message(Command("edit_doc"))
 async def cmd_edit_doc(message: Message, command: CommandObject):
-    """Edit metadata of a document. Usage: /edit_doc [id] [field]=[value]"""
     if not command.args:
         await message.answer(
             "Usage: <code>/edit_doc [id] [field]=[value]</code>\n\n"
@@ -287,7 +347,7 @@ async def cmd_edit_doc(message: Message, command: CommandObject):
         await message.answer(f"Document {doc_id} not found.")
 
 
-# ── User Management ───────────────────────────────
+# ── User Management & Direct Message ───────────────
 
 @router.callback_query(F.data.startswith("adm:users:"))
 async def cb_admin_users(callback: CallbackQuery):
@@ -302,9 +362,10 @@ async def cb_admin_users(callback: CallbackQuery):
     await callback.answer()
 
 @router.callback_query(F.data.startswith("adm:u:"))
-async def cb_admin_user_actions(callback: CallbackQuery):
+async def cb_admin_user_actions(callback: CallbackQuery, state: FSMContext):
     parts = callback.data.split(":")
     telegram_id = int(parts[2])
+    
     if len(parts) == 3:
         async with get_session() as session:
             user = await session.execute(select(User).where(User.telegram_id == telegram_id))
@@ -314,6 +375,9 @@ async def cb_admin_user_actions(callback: CallbackQuery):
             return
         prem_status = "⭐ ACTIVE" if user.is_premium else "❌ INACTIVE"
         if user.premium_expiry: prem_status += f" (until {user.premium_expiry.strftime('%Y-%m-%d')})"
+        
+        ban_status = "🚫 BANNED" if user.is_banned else "✅ ACTIVE"
+        
         text = (
             f"👤 <b>User Profile</b>\n\n"
             f"🆔 ID: <code>{user.telegram_id}</code>\n"
@@ -321,9 +385,10 @@ async def cb_admin_user_actions(callback: CallbackQuery):
             f" USERNAME: @{escape(user.username or 'N/A')}\n\n"
             f"📊 Search Count: {user.search_count}\n"
             f"📤 Upload Count: {user.upload_count}\n"
-            f"🎟️ Premium: {prem_status}"
+            f"🎟️ Premium: {prem_status}\n"
+            f"🚫 Status: {ban_status}"
         )
-        await callback.message.edit_text(text, reply_markup=admin_user_actions_kb(telegram_id, user.is_premium))
+        await callback.message.edit_text(text, reply_markup=admin_user_actions_kb(telegram_id, user.is_premium, user.is_banned))
         await callback.answer()
     elif len(parts) == 4:
         action = parts[3]
@@ -336,7 +401,43 @@ async def cb_admin_user_actions(callback: CallbackQuery):
         elif action == "reset":
             await user_service.reset_search_count(telegram_id)
             await callback.answer("Search count reset!", show_alert=True)
+        elif action == "ban":
+            await user_service.ban_user(telegram_id)
+            await callback.answer("User banned!", show_alert=True)
+        elif action == "unban":
+            await user_service.unban_user(telegram_id)
+            await callback.answer("User unbanned!", show_alert=True)
+        elif action == "msg":
+            await state.set_state(DirectMessageStates.waiting_message)
+            await state.update_data(target_id=telegram_id)
+            await callback.message.answer(
+                f"✉️ <b>Direct Message to User {telegram_id}</b>\n\n"
+                "Send the message you want to send to this user. You can send text, photos, videos, or documents.\n\n"
+                "Send /cancel to abort."
+            )
+            await callback.answer()
         await cb_admin_user_actions(callback)
+
+@router.message(DirectMessageStates.waiting_message, Command("cancel"))
+async def cancel_dm(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer("❌ Direct message cancelled.", reply_markup=admin_menu_kb())
+
+@router.message(DirectMessageStates.waiting_message)
+async def perform_dm(message: Message, state: FSMContext, bot: Bot):
+    data = await state.get_data()
+    target_id = data.get("target_id")
+    await state.clear()
+
+    if not target_id:
+        await message.answer("❌ Error: Target user not found. Please try again.")
+        return
+
+    try:
+        await bot.copy_message(chat_id=target_id, from_chat_id=message.chat.id, message_id=message.message_id)
+        await message.answer(f"✅ Message sent successfully to user <code>{target_id}</code>.")
+    except Exception as e:
+        await message.answer(f"❌ Failed to send message to user <code>{target_id}</code>. They may have blocked the bot.\nError: {escape(str(e))}")
 
 # ── Document Management ───────────────────────────
 
