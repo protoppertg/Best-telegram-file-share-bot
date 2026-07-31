@@ -1,0 +1,42 @@
+services:
+  - type: web
+    name: prepcore-bot
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: BOT_USERNAME
+        sync: false
+      - key: WEBHOOK_URL
+        sync: false
+      - key: WEBHOOK_PATH
+        value: /webhook
+      - key: WEBHOOK_SECRET
+        sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: prepcore-db
+          property: connectionString
+      - key: ADMIN_IDS
+        sync: false
+      - key: CHANNEL_ID
+        sync: false
+      - key: MODERATION_ENABLED
+        value: "false"
+      - key: USE_POLLING
+        value: "false"
+      - key: WEB_ADMIN_SECRET_KEY
+        sync: false
+      - key: WEB_ADMIN_PASSWORD
+        sync: false
+
+databases:
+  - name: prepcore-db
+    databaseName: prepcore
+    plan: free
+    ipAllowList: []
