@@ -31,7 +31,7 @@ async def get_or_create_user(session: AsyncSession, telegram_id: int, username: 
 
 async def reset_daily_counts_if_needed(session: AsyncSession, user: User) -> bool:
     today = date.today()
-    if user.last_reset_date < today:
+    if user.last_reset_date is None or user.last_reset_date < today:
         user.search_count = 0
         user.upload_count = 0
         user.last_reset_date = today
@@ -57,18 +57,26 @@ async def check_upload_limit(user: User) -> bool:
     return user.upload_count < await get_user_upload_limit(user)
 
 async def increment_search_count(session: AsyncSession, telegram_id: int) -> None:
-    result = await session.execute(select(User).where(User.telegram_id == telegram_id))
-    user = result.scalar_one_or_none()
-    if user:
-        user.search_count += 1
-        await session.flush()
+    try:
+        result = await session.execute(select(User).where(User.telegram_id == telegram_id))
+        user = result.scalar_one_or_none()
+        if user:
+            user.search_count += 1
+            await session.flush()
+    except Exception as e:
+        logger.error("increment_search_error", error=str(e))
+        await session.rollback()
 
 async def increment_upload_count(session: AsyncSession, telegram_id: int) -> None:
-    result = await session.execute(select(User).where(User.telegram_id == telegram_id))
-    user = result.scalar_one_or_none()
-    if user:
-        user.upload_count += 1
-        await session.flush()
+    try:
+        result = await session.execute(select(User).where(User.telegram_id == telegram_id))
+        user = result.scalar_one_or_none()
+        if user:
+            user.upload_count += 1
+            await session.flush()
+    except Exception as e:
+        logger.error("increment_upload_error", error=str(e))
+        await session.rollback()
 
 
 async def activate_premium(telegram_id: int, duration_days: int) -> bool:
@@ -139,6 +147,9 @@ async def get_stats(session: AsyncSession) -> dict:
     }
 
 async def log_search(session: AsyncSession, user_id: Optional[int], query: str, result_count: int) -> None:
-    log = SearchLog(user_id=user_id, query=query, result_count=result_count)
-    session.add(log)
-    await session.flush()
+    try:
+        log = SearchLog(user_id=user_id, query=query, result_count=result_count)
+        session.add(log)
+        await session.flush()
+    except Exception:
+        await session.rollback()
