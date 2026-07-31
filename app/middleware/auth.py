@@ -1,4 +1,4 @@
-"""Authentication, user-registration, and Force Sub middleware."""
+"""Authentication, user-registration, Force Sub, and Ban middleware."""
 
 from __future__ import annotations
 
@@ -26,6 +26,15 @@ class AuthMiddleware(BaseMiddleware):
                 user = await get_or_create_user(session, telegram_id=tg_user.id, username=tg_user.username, first_name=tg_user.first_name, last_name=tg_user.last_name)
                 await reset_daily_counts_if_needed(session, user)
                 
+                # ── Ban Check ──────────────────────────
+                if user.is_banned:
+                    if isinstance(event, CallbackQuery):
+                        await event.answer("You are banned from using this bot.", show_alert=True)
+                    elif isinstance(event, Message):
+                        await bot.send_message(tg_user.id, "🚫 You have been banned from using this bot.")
+                    return  # Stop processing entirely
+                
+                # ── Force Sub Check ──────────────────────
                 fs_id_setting = await session.execute(select(BotSetting).where(BotSetting.key == "force_sub_channel_id"))
                 fs_id_setting = fs_id_setting.scalar_one_or_none()
                 
