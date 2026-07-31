@@ -19,7 +19,6 @@ from app.utils.logger import logger
 
 router = APIRouter(prefix="/admin")
 
-# Hardcoded absolute path to templates directory to prevent startup crashes
 BASE_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
@@ -30,9 +29,9 @@ async def verify_admin(request: Request):
     return True
 
 
-@router.get("/login", response_class=templates.TemplateResponse)
+@router.get("/login")
 async def admin_login(request: Request):
-    return templates.TemplateResponse("login.html", {"request": request, "error": None})
+    return templates.TemplateResponse(request, "login.html", {"error": None})
 
 
 @router.post("/login")
@@ -40,7 +39,7 @@ async def admin_login_post(request: Request, password: str = Form(...)):
     if password == settings.WEB_ADMIN_PASSWORD:
         request.session["is_admin"] = True
         return RedirectResponse(url="/admin/", status_code=303)
-    return templates.TemplateResponse("login.html", {"request": request, "error": "Invalid password"})
+    return templates.TemplateResponse(request, "login.html", {"error": "Invalid password"})
 
 
 @router.get("/logout")
@@ -49,14 +48,14 @@ async def admin_logout(request: Request):
     return RedirectResponse(url="/admin/login", status_code=303)
 
 
-@router.get("/", dependencies=[Depends(verify_admin)], response_class=templates.TemplateResponse)
+@router.get("/", dependencies=[Depends(verify_admin)])
 async def admin_dashboard(request: Request):
     async with get_session() as session:
         stats = await user_service.get_stats(session)
-    return templates.TemplateResponse("dashboard.html", {"request": request, "stats": stats, "active": "dashboard"})
+    return templates.TemplateResponse(request, "dashboard.html", {"stats": stats, "active": "dashboard"})
 
 
-@router.get("/documents", dependencies=[Depends(verify_admin)], response_class=templates.TemplateResponse)
+@router.get("/documents", dependencies=[Depends(verify_admin)])
 async def admin_documents(request: Request, page: int = 1, q: Optional[str] = None):
     per_page = 15
     async with get_session() as session:
@@ -67,7 +66,7 @@ async def admin_documents(request: Request, page: int = 1, q: Optional[str] = No
         total = (await session.execute(select(Document).where(Document.file_name.ilike(f"%{q}%")) if q else select(Document))).scalars().all()
         total = len(total)
     total_pages = max(1, (total + per_page - 1) // per_page)
-    return templates.TemplateResponse("documents.html", {"request": request, "docs": docs, "page": page, "total_pages": total_pages, "q": q, "active": "documents"})
+    return templates.TemplateResponse(request, "documents.html", {"docs": docs, "page": page, "total_pages": total_pages, "q": q, "active": "documents"})
 
 
 @router.post("/documents/{doc_id}/approve", dependencies=[Depends(verify_admin)])
@@ -82,7 +81,7 @@ async def admin_delete_doc(doc_id: int):
     return Response(status_code=200)
 
 
-@router.get("/users", dependencies=[Depends(verify_admin)], response_class=templates.TemplateResponse)
+@router.get("/users", dependencies=[Depends(verify_admin)])
 async def admin_users(request: Request, page: int = 1, q: Optional[str] = None):
     per_page = 15
     async with get_session() as session:
@@ -93,7 +92,7 @@ async def admin_users(request: Request, page: int = 1, q: Optional[str] = None):
         all_users = (await session.execute(stmt)).scalars().all()
         total = len(all_users)
     total_pages = max(1, (total + per_page - 1) // per_page)
-    return templates.TemplateResponse("users.html", {"request": request, "users": users, "page": page, "total_pages": total_pages, "q": q, "active": "users"})
+    return templates.TemplateResponse(request, "users.html", {"users": users, "page": page, "total_pages": total_pages, "q": q, "active": "users"})
 
 
 @router.post("/users/{telegram_id}/grant_premium", dependencies=[Depends(verify_admin)])
