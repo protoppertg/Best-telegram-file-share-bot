@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+import re
 from html import escape
 from typing import Any
 
@@ -41,9 +42,21 @@ class UploadStates(StatesGroup):
 async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
     text = (
-        "👋 <b>Welcome to PrepCore!</b>\n\n"
-        "Your searchable library of study materials.\n\n"
-        "Use the menu below to navigate, or just type what you're looking for!"
+        "✨ <b>Welcome to PrepCore!</b> ✨\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "📚 Your ultimate library for study materials.\n"
+        "Find notes, PYQs, and books in seconds!\n\n"
+        
+        "🛠 <b>How to use me:</b>\n"
+        "┣👉 <b>Search:</b> Type keywords or use advanced filters.\n"
+        "┣👉 <b>Upload:</b> Send a PDF to support the community.\n"
+        "┗👉 <b>Premium:</b> Unlock unlimited searches & ad-free downloads.\n\n"
+        
+        "💡 <b>Advanced Search Tip:</b>\n"
+        "You can filter your search using tags!\n"
+        "<code>physics subject:Math class:10 year:2023</code>\n\n"
+        
+        "<i>Ready to dive in? Just type a keyword below!</i>"
     )
     await message.answer(text, reply_markup=main_menu_kb())
 
@@ -53,10 +66,15 @@ async def cmd_start(message: Message, state: FSMContext):
 async def cmd_help(message: Message):
     text = (
         "📖 <b>Help & Guide</b>\n\n"
-        "🔍 <b>Search:</b> Type your query or tap the Search button.\n"
+        "🔍 <b>Basic Search:</b>\n"
+        "Just type what you're looking for (e.g., <code>physics notes</code>).\n\n"
+        
+        "🚀 <b>Advanced Search:</b>\n"
+        "Use filters to narrow down results instantly!\n"
+        "<code>math subject:Physics class:Class 10 year:2023</code>\n\n"
+        
         "📤 <b>Upload:</b> Send a PDF to support the library.\n"
-        "🎟️ <b>Premium:</b> Get unlimited searches and ad-free downloads.\n\n"
-        "If you get stuck, just use the buttons at the bottom!"
+        "🎟️ <b>Premium:</b> Get unlimited searches and ad-free downloads."
     )
     await message.answer(text)
 
@@ -134,6 +152,34 @@ async def text_search(message: Message, db_user: User | None = None):
     await _perform_search(message, query, db_user, page=1)
 
 
+def _parse_advanced_search(raw_query: str) -> tuple[str, Optional[str], Optional[str], Optional[int]]:
+    """Extracts subject, class, and year filters from the search query."""
+    subject = None
+    class_name = None
+    year = None
+    clean_query = raw_query
+
+    sub_match = re.search(r'(?:subject|sub):\s*([^\s]+)', raw_query, re.IGNORECASE)
+    if sub_match:
+        subject = sub_match.group(1)
+        clean_query = clean_query.replace(sub_match.group(0), "").strip()
+
+    class_match = re.search(r'(?:class|cls):\s*([^\s]+)', raw_query, re.IGNORECASE)
+    if class_match:
+        class_name = class_match.group(1)
+        clean_query = clean_query.replace(class_match.group(0), "").strip()
+
+    year_match = re.search(r'(?:year|yr):\s*(\d{4})', raw_query, re.IGNORECASE)
+    if year_match:
+        year = int(year_match.group(1))
+        clean_query = clean_query.replace(year_match.group(0), "").strip()
+
+    if not clean_query:
+        clean_query = " "
+
+    return clean_query, subject, class_name, year
+
+
 async def _perform_search(message: Message, query: str, db_user: User | None, page: int) -> None:
     async with get_session() as session:
         setting = await session.execute(select(BotSetting).where(BotSetting.key == "search_enabled"))
@@ -148,18 +194,30 @@ async def _perform_search(message: Message, query: str, db_user: User | None, pa
                 await message.answer(f"⛔ <b>Daily search limit reached ({limit}/{limit})</b>")
                 return
 
-        results, total = await search_documents(session, query, page=page)
+        clean_q, subject_filter, class_filter, year_filter = _parse_advanced_search(query)
+        
+        results, total = await search_documents(
+            session, clean_q, page=page, 
+            subject=subject_filter, class_name=class_filter, year=year_filter
+        )
+
         if db_user:
             await user_service.increment_search_count(session, db_user.telegram_id)
             await user_service.log_search(session, db_user.id, query, total)
 
     if not results:
-        await message.answer(f"🔍 No results found for <b>{escape(sanitise_text(query, 100))}</b>.")
+        await message.answer(f"🔍 No results found for <b>{escape(sanitise_text(query, 100))}</b>.\nTry different keywords or remove some filters.")
         return
 
     query_key = uuid.uuid4().hex[:8]
     cache = await get_cache()
-    await cache.set(f"searchq:{query_key}", query, ttl=1800)
+    cache_data = {
+        "query": clean_q, 
+        "subject": subject_filter, 
+        "class_name": class_filter, 
+        "year": year_filter
+    }
+    await cache.set(f"searchq:{query_key}", cache_data, ttl=1800)
 
     per_page = settings.SEARCH_RESULTS_PER_PAGE
     total_pages = max(1, (total + per_page - 1) // per_page)
