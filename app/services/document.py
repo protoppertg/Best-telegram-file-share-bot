@@ -73,7 +73,6 @@ async def approve_document(session: AsyncSession, doc_id: int) -> bool:
 async def delete_duplicates(session: AsyncSession) -> int:
     """Deletes documents with duplicate file_names, keeping only the oldest one (smallest ID)."""
     try:
-        # Raw SQL to delete duplicates efficiently
         result = await session.execute(text("""
             DELETE FROM documents
             WHERE id NOT IN (
