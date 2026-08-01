@@ -111,52 +111,56 @@ async def admin_settings_post(
     about_text: str = Form(""),
     premium_text: str = Form("")
 ):
-    async with get_session() as session:
-        s_val = "true" if search_enabled == "on" else "false"
-        s_setting = await session.execute(select(BotSetting).where(BotSetting.key == "search_enabled"))
-        s_setting = s_setting.scalar_one_or_none()
-        if not s_setting: session.add(BotSetting(key="search_enabled", value=s_val))
-        else: s_setting.value = s_val
-            
-        ad_val = "true" if auto_delete_enabled == "on" else "false"
-        ad_setting = await session.execute(select(BotSetting).where(BotSetting.key == "auto_delete_enabled"))
-        ad_setting = ad_setting.scalar_one_or_none()
-        if not ad_setting: session.add(BotSetting(key="auto_delete_enabled", value=ad_val))
-        else: ad_setting.value = ad_val
-            
-        seconds_val = auto_delete_seconds if auto_delete_seconds.isdigit() else "3600"
-        secs_setting = await session.execute(select(BotSetting).where(BotSetting.key == "auto_delete_seconds"))
-        secs_setting = secs_setting.scalar_one_or_none()
-        if not secs_setting: session.add(BotSetting(key="auto_delete_seconds", value=seconds_val))
-        else: secs_setting.value = seconds_val
-            
-        pf_val = "true" if protect_forwarding == "on" else "false"
-        pf_setting = await session.execute(select(BotSetting).where(BotSetting.key == "protect_forwarding"))
-        pf_setting = pf_setting.scalar_one_or_none()
-        if not pf_setting: session.add(BotSetting(key="protect_forwarding", value=pf_val))
-        else: pf_setting.value = pf_val
-            
-        pfm_setting = await session.execute(select(BotSetting).where(BotSetting.key == "post_file_message"))
-        pfm_setting = pfm_setting.scalar_one_or_none()
-        if not pfm_setting: session.add(BotSetting(key="post_file_message", value=post_file_message))
-        else: pfm_setting.value = post_file_message
-            
-        st_setting = await session.execute(select(BotSetting).where(BotSetting.key == "start_text"))
-        st_setting = st_setting.scalar_one_or_none()
-        if not st_setting: session.add(BotSetting(key="start_text", value=start_text))
-        else: st_setting.value = start_text
-            
-        at_setting = await session.execute(select(BotSetting).where(BotSetting.key == "about_text"))
-        at_setting = at_setting.scalar_one_or_none()
-        if not at_setting: session.add(BotSetting(key="about_text", value=about_text))
-        else: at_setting.value = about_text
-            
-        pt_setting = await session.execute(select(BotSetting).where(BotSetting.key == "premium_text"))
-        pt_setting = pt_setting.scalar_one_or_none()
-        if not pt_setting: session.add(BotSetting(key="premium_text", value=premium_text))
-        else: pt_setting.value = premium_text
-            
-    return RedirectResponse(url="/admin/settings", status_code=303)
+    try:
+        async with get_session() as session:
+            s_val = "true" if search_enabled == "on" else "false"
+            s_setting = await session.execute(select(BotSetting).where(BotSetting.key == "search_enabled"))
+            s_setting = s_setting.scalar_one_or_none()
+            if not s_setting: session.add(BotSetting(key="search_enabled", value=s_val))
+            else: s_setting.value = s_val
+                
+            ad_val = "true" if auto_delete_enabled == "on" else "false"
+            ad_setting = await session.execute(select(BotSetting).where(BotSetting.key == "auto_delete_enabled"))
+            ad_setting = ad_setting.scalar_one_or_none()
+            if not ad_setting: session.add(BotSetting(key="auto_delete_enabled", value=ad_val))
+            else: ad_setting.value = ad_val
+                
+            seconds_val = auto_delete_seconds if auto_delete_seconds.isdigit() else "3600"
+            secs_setting = await session.execute(select(BotSetting).where(BotSetting.key == "auto_delete_seconds"))
+            secs_setting = secs_setting.scalar_one_or_none()
+            if not secs_setting: session.add(BotSetting(key="auto_delete_seconds", value=seconds_val))
+            else: secs_setting.value = seconds_val
+                
+            pf_val = "true" if protect_forwarding == "on" else "false"
+            pf_setting = await session.execute(select(BotSetting).where(BotSetting.key == "protect_forwarding"))
+            pf_setting = pf_setting.scalar_one_or_none()
+            if not pf_setting: session.add(BotSetting(key="protect_forwarding", value=pf_val))
+            else: pf_setting.value = pf_val
+                
+            pfm_setting = await session.execute(select(BotSetting).where(BotSetting.key == "post_file_message"))
+            pfm_setting = pfm_setting.scalar_one_or_none()
+            if not pfm_setting: session.add(BotSetting(key="post_file_message", value=post_file_message))
+            else: pfm_setting.value = post_file_message
+                
+            st_setting = await session.execute(select(BotSetting).where(BotSetting.key == "start_text"))
+            st_setting = st_setting.scalar_one_or_none()
+            if not st_setting: session.add(BotSetting(key="start_text", value=start_text))
+            else: st_setting.value = start_text
+                
+            at_setting = await session.execute(select(BotSetting).where(BotSetting.key == "about_text"))
+            at_setting = at_setting.scalar_one_or_none()
+            if not at_setting: session.add(BotSetting(key="about_text", value=about_text))
+            else: at_setting.value = about_text
+                
+            pt_setting = await session.execute(select(BotSetting).where(BotSetting.key == "premium_text"))
+            pt_setting = pt_setting.scalar_one_or_none()
+            if not pt_setting: session.add(BotSetting(key="premium_text", value=premium_text))
+            else: pt_setting.value = premium_text
+                
+        return RedirectResponse(url="/admin/settings", status_code=303)
+    except Exception as e:
+        logger.error("web_settings_save_failed", error=str(e), exc_info=True)
+        return RedirectResponse(url="/admin/settings?status=error", status_code=303)
 
 @router.post("/settings/fs_add", dependencies=[Depends(verify_admin)])
 async def admin_settings_fs_add(channel_id: str = Form(...), invite_link: str = Form(...)):
