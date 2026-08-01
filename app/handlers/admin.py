@@ -317,8 +317,19 @@ async def auto_index_channel_post(message: Message, bot: Bot):
         #except Exception:
             #pass
 
+
 # ── Edit Document Metadata ───────────────────────
 
+@router.message(Command("dedupe"))
+async def cmd_dedupe(message: Message):
+    """Finds and deletes duplicate files based on file_name."""
+    async with get_session() as session:
+        deleted_count = await doc_service.delete_duplicates(session)
+    
+    if deleted_count > 0:
+        await message.answer(f"🧹 <b>Cleanup Complete!</b>\n\nDeleted {deleted_count} duplicate files. The oldest copy of each file was kept.")
+    else:
+        await message.answer("✅ No duplicate files found. Your database is clean!")
 @router.message(Command("edit_doc"))
 async def cmd_edit_doc(message: Message, command: CommandObject):
     if not command.args:
