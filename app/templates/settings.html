@@ -1,96 +1,101 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="flex justify-between items-center mb-6">
-    <h1 class="text-3xl font-bold">Settings</h1>
+<div class="mb-8">
+    <h1 class="text-3xl font-bold text-gray-900">Settings</h1>
+    <p class="text-gray-500 mt-1">Manage your bot's behavior and text.</p>
 </div>
 
-<div class="bg-white p-6 rounded-lg shadow max-w-md mb-6">
-    <h2 class="text-xl font-bold mb-4">Bot Features</h2>
-    <form method="POST" action="/admin/settings">
-        <div class="flex items-center mb-4">
-            <label class="inline-flex items-center cursor-pointer">
-                <input type="checkbox" name="search_enabled" class="sr-only peer" {% if search_enabled %}checked{% endif %}>
-                <div class="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
-            </label>
-            <span class="ms-3 text-sm font-medium text-gray-900">Enable Search Feature</span>
-        </div>
-        <p class="text-gray-500 text-sm mb-4">If turned off, users will not be able to search for files.</p>
-        
-        <hr class="my-6 border-gray-200">
-
-        <h2 class="text-xl font-bold mb-4">Auto-Delete Downloads</h2>
-        <div class="flex items-center mb-4">
-            <label class="inline-flex items-center cursor-pointer">
-                <input type="checkbox" name="auto_delete_enabled" class="sr-only peer" {% if ad_enabled %}checked{% endif %}>
-                <div class="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
-            </label>
-            <span class="ms-3 text-sm font-medium text-gray-900">Enable Auto-Delete in User Chat</span>
-        </div>
-        <div class="mb-4">
-            <label class="block text-gray-700 text-sm font-bold mb-2">Delete after (seconds)</label>
-            <input type="number" name="auto_delete_seconds" value="{{ ad_seconds }}" required class="w-full border p-2 rounded focus:outline-none focus:ring-2 focus:ring-blue-600">
-            <p class="text-gray-500 text-sm mt-1">3600 = 1 hour, 86400 = 1 day. (Telegram limits bot deletion to 48h)</p>
-        </div>
-
-        <hr class="my-6 border-gray-200">
-
-        <h2 class="text-xl font-bold mb-4">Piracy Protection</h2>
-        <div class="flex items-center mb-4">
-            <label class="inline-flex items-center cursor-pointer">
-                <input type="checkbox" name="protect_forwarding" class="sr-only peer" {% if protect_forwarding %}checked{% endif %}>
-                <div class="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
-            </label>
-            <span class="ms-3 text-sm font-medium text-gray-900">Prevent Forwarding & Saving</span>
-        </div>
-        <p class="text-gray-500 text-sm mb-4">If turned on, users cannot forward the file or save it to their gallery.</p>
-
-        <hr class="my-6 border-gray-200">
-
-        <h2 class="text-xl font-bold mb-4">Post-File Message</h2>
-        <div class="mb-4">
-            <label class="block text-gray-700 text-sm font-bold mb-2">Custom Text After File</label>
-            <textarea name="post_file_message" rows="4" class="w-full border p-2 rounded focus:outline-none focus:ring-2 focus:ring-blue-600" placeholder="Leave blank to disable. HTML is supported.">{{ post_file_message }}</textarea>
-            <p class="text-gray-500 text-sm mt-1">This text will be sent immediately after the file. If Auto-Delete is on, this text will also be deleted with the file.</p>
-        </div>
-
-        <button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">Save Settings</button>
-    </form>
-</div>
-
-<div class="bg-white p-6 rounded-lg shadow max-w-2xl">
-    <h2 class="text-xl font-bold mb-4">Force Sub Channels</h2>
-    
-    {% if channels %}
-    <div class="mb-6 space-y-2">
-        {% for ch in channels %}
-        <div class="flex items-center justify-between bg-gray-50 p-3 rounded border">
+<div class="space-y-6">
+    <!-- Bot Texts -->
+    <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+        <h2 class="text-xl font-bold mb-4 text-gray-900">Bot Texts</h2>
+        <form method="POST" action="/admin/settings" class="space-y-6">
             <div>
-                <p class="font-medium text-sm text-gray-700">ID: {{ ch.id }}</p>
-                <p class="text-sm text-blue-600 truncate">{{ ch.link }}</p>
+                <label class="block text-gray-700 text-sm font-bold mb-2">Start Message (/start)</label>
+                <textarea name="start_text" rows="6" class="w-full border border-gray-200 p-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition" placeholder="Leave blank to use default message. HTML is supported.">{{ start_text }}</textarea>
             </div>
-            <form method="POST" action="/admin/settings/fs_delete/{{ loop.index0 }}">
-                <button type="submit" class="text-red-600 hover:text-red-900"><i class="fas fa-trash"></i></button>
-            </form>
-        </div>
-        {% endfor %}
+            <div>
+                <label class="block text-gray-700 text-sm font-bold mb-2">About Message (/about)</label>
+                <textarea name="about_text" rows="4" class="w-full border border-gray-200 p-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition" placeholder="Leave blank to use default message. HTML is supported.">{{ about_text }}</textarea>
+            </div>
+
+            <hr class="border-gray-100">
+
+            <h2 class="text-xl font-bold pt-4 text-gray-900">Features & Protections</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div class="flex flex-col space-y-3">
+                    <div class="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
+                        <span class="text-sm font-medium text-gray-900">Enable Search</span>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" name="search_enabled" class="sr-only peer" {% if search_enabled %}checked{% endif %}>
+                            <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:bg-blue-500 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all"></div>
+                        </label>
+                    </div>
+                    <div class="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
+                        <span class="text-sm font-medium text-gray-900">Auto-Delete Files</span>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" name="auto_delete_enabled" class="sr-only peer" {% if ad_enabled %}checked{% endif %}>
+                            <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:bg-blue-500 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all"></div>
+                        </label>
+                    </div>
+                </div>
+                <div class="flex flex-col space-y-3">
+                    <div class="p-3 bg-gray-50 rounded-xl">
+                        <label class="block text-gray-700 text-sm font-bold mb-1">Delete after (sec)</label>
+                        <input type="number" name="auto_delete_seconds" value="{{ ad_seconds }}" class="w-full bg-transparent border-none focus:outline-none text-sm">
+                    </div>
+                    <div class="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
+                        <span class="text-sm font-medium text-gray-900">Prevent Forwarding</span>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" name="protect_forwarding" class="sr-only peer" {% if protect_forwarding %}checked{% endif %}>
+                            <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:bg-blue-500 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all"></div>
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <div>
+                <label class="block text-gray-700 text-sm font-bold mb-2">Post-File Message</label>
+                <textarea name="post_file_message" rows="3" class="w-full border border-gray-200 p-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition" placeholder="Leave blank to disable.">{{ post_file_message }}</textarea>
+            </div>
+
+            <button type="submit" class="bg-blue-500 text-white px-6 py-2.5 rounded-xl hover:bg-blue-600 transition shadow-sm">Save Settings</button>
+        </form>
     </div>
-    {% else %}
-    <p class="text-gray-500 text-sm mb-4">No channels added yet. Users can use the bot freely.</p>
-    {% endif %}
 
-    <hr class="my-4 border-gray-200">
+    <!-- Force Sub -->
+    <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+        <h2 class="text-xl font-bold mb-4 text-gray-900">Force Sub Channels</h2>
+        {% if channels %}
+        <div class="mb-6 space-y-2">
+            {% for ch in channels %}
+            <div class="flex items-center justify-between bg-gray-50 p-3 rounded-xl border border-gray-100">
+                <div>
+                    <p class="font-medium text-sm text-gray-700">ID: {{ ch.id }}</p>
+                    <p class="text-sm text-blue-500 truncate">{{ ch.link }}</p>
+                </div>
+                <form method="POST" action="/admin/settings/fs_delete/{{ loop.index0 }}">
+                    <button type="submit" class="text-red-500 hover:text-red-700 p-2"><i class="fas fa-trash"></i></button>
+                </form>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
 
-    <h3 class="text-lg font-bold mb-4">Add New Channel</h3>
-    <form method="POST" action="/admin/settings/fs_add" class="space-y-3">
-        <div>
-            <label class="block text-gray-700 text-sm font-bold mb-2">Channel ID (e.g., -1001234567890)</label>
-            <input type="text" name="channel_id" required class="w-full border p-2 rounded focus:outline-none focus:ring-2 focus:ring-blue-600">
-        </div>
-        <div>
-            <label class="block text-gray-700 text-sm font-bold mb-2">Invite Link (e.g., https://t.me/+abc)</label>
-            <input type="text" name="invite_link" required class="w-full border p-2 rounded focus:outline-none focus:ring-2 focus:ring-blue-600">
-        </div>
-        <button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">Add Channel</button>
-    </form>
+        <h3 class="text-lg font-bold mb-4 text-gray-900">Add New Channel</h3>
+        <form method="POST" action="/admin/settings/fs_add" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+                <label class="block text-gray-700 text-sm font-bold mb-2">Channel ID</label>
+                <input type="text" name="channel_id" required class="w-full border border-gray-200 p-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition" placeholder="-1001234567890">
+            </div>
+            <div>
+                <label class="block text-gray-700 text-sm font-bold mb-2">Invite Link</label>
+                <input type="text" name="invite_link" required class="w-full border border-gray-200 p-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition" placeholder="https://t.me/+abc">
+            </div>
+            <div class="col-span-2">
+                <button type="submit" class="bg-gray-800 text-white px-6 py-2.5 rounded-xl hover:bg-gray-900 transition shadow-sm">Add Channel</button>
+            </div>
+        </form>
+    </div>
 </div>
 {% endblock %}
