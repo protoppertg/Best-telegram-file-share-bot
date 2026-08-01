@@ -1,29 +1,46 @@
 {% extends "base.html" %}
 {% block content %}
-<h1 class="text-3xl font-bold mb-8">Dashboard</h1>
-<div class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6 mb-8">
-    <div class="bg-white p-6 rounded-lg shadow border-l-4 border-blue-500">
-        <div class="text-sm text-gray-500 uppercase">Total Documents</div>
-        <div class="text-3xl font-bold mt-2">{{ stats.total_documents }}</div>
+<div class="mb-8">
+    <h1 class="text-3xl font-bold text-gray-900">Dashboard</h1>
+    <p class="text-gray-500 mt-1">Welcome back to your control center.</p>
+</div>
+
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+    <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+        <div class="flex items-center justify-between mb-4">
+            <span class="text-gray-500 text-sm font-medium">Total Documents</span>
+            <i class="fas fa-file-pdf text-blue-500"></i>
+        </div>
+        <div class="text-3xl font-bold text-gray-900">{{ stats.total_documents }}</div>
     </div>
-    <div class="bg-white p-6 rounded-lg shadow border-l-4 border-green-500">
-        <div class="text-sm text-gray-500 uppercase">Total Users</div>
-        <div class="text-3xl font-bold mt-2">{{ stats.total_users }}</div>
+    <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+        <div class="flex items-center justify-between mb-4">
+            <span class="text-gray-500 text-sm font-medium">Total Users</span>
+            <i class="fas fa-users text-green-500"></i>
+        </div>
+        <div class="text-3xl font-bold text-gray-900">{{ stats.total_users }}</div>
     </div>
-    <div class="bg-white p-6 rounded-lg shadow border-l-4 border-yellow-500">
-        <div class="text-sm text-gray-500 uppercase">Premium Users</div>
-        <div class="text-3xl font-bold mt-2">{{ stats.premium_users }}</div>
+    <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+        <div class="flex items-center justify-between mb-4">
+            <span class="text-gray-500 text-sm font-medium">Premium Users</span>
+            <i class="fas fa-crown text-yellow-500"></i>
+        </div>
+        <div class="text-3xl font-bold text-gray-900">{{ stats.premium_users }}</div>
     </div>
-    <div class="bg-white p-6 rounded-lg shadow border-l-4 border-purple-500">
-        <div class="text-sm text-gray-500 uppercase">Searches Today</div>
-        <div class="text-3xl font-bold mt-2">{{ stats.searches_today }}</div>
+    <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+        <div class="flex items-center justify-between mb-4">
+            <span class="text-gray-500 text-sm font-medium">Searches Today</span>
+            <i class="fas fa-search text-purple-500"></i>
+        </div>
+        <div class="text-3xl font-bold text-gray-900">{{ stats.searches_today }}</div>
     </div>
 </div>
-<div class="bg-white p-6 rounded-lg shadow">
-    <h2 class="text-xl font-bold mb-4">Quick Actions</h2>
+
+<div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+    <h2 class="text-xl font-bold mb-4 text-gray-900">Quick Actions</h2>
     <div class="flex space-x-4">
-        <a href="/admin/documents" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">Manage Documents</a>
-        <a href="/admin/users" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700">Manage Users</a>
+        <a href="/admin/documents" class="bg-blue-500 text-white px-4 py-2 rounded-xl hover:bg-blue-600 transition shadow-sm">Manage Documents</a>
+        <a href="/admin/users" class="bg-gray-100 text-gray-700 px-4 py-2 rounded-xl hover:bg-gray-200 transition">Manage Users</a>
     </div>
 </div>
 {% endblock %}
