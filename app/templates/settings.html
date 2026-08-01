@@ -42,7 +42,16 @@
             </label>
             <span class="ms-3 text-sm font-medium text-gray-900">Prevent Forwarding & Saving</span>
         </div>
-        <p class="text-gray-500 text-sm mb-4">If turned on, users cannot forward the file or save it to their gallery. (Database is never affected).</p>
+        <p class="text-gray-500 text-sm mb-4">If turned on, users cannot forward the file or save it to their gallery.</p>
+
+        <hr class="my-6 border-gray-200">
+
+        <h2 class="text-xl font-bold mb-4">Post-File Message</h2>
+        <div class="mb-4">
+            <label class="block text-gray-700 text-sm font-bold mb-2">Custom Text After File</label>
+            <textarea name="post_file_message" rows="4" class="w-full border p-2 rounded focus:outline-none focus:ring-2 focus:ring-blue-600" placeholder="Leave blank to disable. HTML is supported.">{{ post_file_message }}</textarea>
+            <p class="text-gray-500 text-sm mt-1">This text will be sent immediately after the file. If Auto-Delete is on, this text will also be deleted with the file.</p>
+        </div>
 
         <button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">Save Settings</button>
     </form>
