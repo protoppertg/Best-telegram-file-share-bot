@@ -1,4 +1,4 @@
-"""PostgreSQL full-text search service (Advanced Filter & Fuzzy Version)."""
+"""PostgreSQL full-text search service (Advanced Filter Version)."""
 
 from __future__ import annotations
 
@@ -25,16 +25,16 @@ SEARCH_SQL = text("""
     SELECT d.id, d.file_name, d.subject, d.category, d.class_name, d.year
     FROM documents d
     WHERE d.approved = true AND (
-        d.file_name ILIKE :q OR 
-        coalesce(d.subject, '') ILIKE :q OR
-        coalesce(d.category, '') ILIKE :q OR
-        coalesce(d.class_name, '') ILIKE :q
+        d.file_name ILIKE '%' || :q || '%' OR 
+        coalesce(d.subject, '') ILIKE '%' || :q || '%' OR
+        coalesce(d.category, '') ILIKE '%' || :q || '%' OR
+        coalesce(d.class_name, '') ILIKE '%' || :q || '%'
     )
     AND (:subject IS NULL OR d.subject ILIKE '%' || :subject || '%')
     AND (:class_name IS NULL OR d.class_name ILIKE '%' || :class_name || '%')
     AND (:year IS NULL OR d.year = :year)
     ORDER BY 
-        CASE WHEN d.file_name ILIKE :q_start THEN 0 ELSE 1 END,
+        CASE WHEN d.file_name ILIKE :q || '%' THEN 0 ELSE 1 END,
         d.created_at DESC
     LIMIT :limit OFFSET :offset
 """)
@@ -42,10 +42,10 @@ SEARCH_SQL = text("""
 COUNT_SQL = text("""
     SELECT COUNT(*) FROM documents d
     WHERE d.approved = true AND (
-        d.file_name ILIKE :q OR 
-        coalesce(d.subject, '') ILIKE :q OR
-        coalesce(d.category, '') ILIKE :q OR
-        coalesce(d.class_name, '') ILIKE :q
+        d.file_name ILIKE '%' || :q || '%' OR 
+        coalesce(d.subject, '') ILIKE '%' || :q || '%' OR
+        coalesce(d.category, '') ILIKE '%' || :q || '%' OR
+        coalesce(d.class_name, '') ILIKE '%' || :q || '%'
     )
     AND (:subject IS NULL OR d.subject ILIKE '%' || :subject || '%')
     AND (:class_name IS NULL OR d.class_name ILIKE '%' || :class_name || '%')
@@ -63,12 +63,7 @@ async def search_documents(
 ) -> tuple[List[SearchRow], int]:
     per_page = per_page or settings.SEARCH_RESULTS_PER_PAGE
     offset = (page - 1) * per_page
-    
-    # Fuzzy matching: replace spaces with '%' so "physics thermodynamics" becomes "%physics%thermodynamics%"
     normalized = query.strip()
-    fuzzy_q = '%' + '%'.join(normalized.split()) + '%'
-    fuzzy_q_start = normalized.split()[0] + '%' if normalized.split() else '%%'
-    
     cache_key = f"search:{normalized}:{page}:{subject}:{class_name}:{year}"
     
     cache = await get_cache()
@@ -78,8 +73,7 @@ async def search_documents(
 
     try:
         params = {
-            "q": fuzzy_q, 
-            "q_start": fuzzy_q_start,
+            "q": normalized, 
             "limit": per_page, 
             "offset": offset,
             "subject": subject,
