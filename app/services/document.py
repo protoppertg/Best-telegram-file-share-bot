@@ -1,10 +1,15 @@
 """Document CRUD operations."""
+
 from __future__ import annotations
+
 from typing import Any, List, Optional
-from sqlalchemy import delete, func, select
+
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.models import Document
 from app.utils.logger import logger
+
 
 async def create_document(session: AsyncSession, *, file_id: str, message_id: Optional[int] = None, file_name: str, subject: Optional[str] = None, category: Optional[str] = None, class_name: Optional[str] = None, year: Optional[int] = None, keywords: Optional[List[str]] = None, description: Optional[str] = None, uploaded_by: Optional[int] = None, approved: bool = True) -> Document:
     doc = Document(
@@ -64,3 +69,21 @@ async def approve_document(session: AsyncSession, doc_id: int) -> bool:
     doc.approved = True
     await session.flush()
     return True
+
+async def delete_duplicates(session: AsyncSession) -> int:
+    """Deletes documents with duplicate file_names, keeping only the oldest one (smallest ID)."""
+    try:
+        # Raw SQL to delete duplicates efficiently
+        result = await session.execute(text("""
+            DELETE FROM documents
+            WHERE id NOT IN (
+                SELECT MIN(id)
+                FROM documents
+                GROUP BY file_name
+            )
+        """))
+        await session.flush()
+        return result.rowcount or 0
+    except Exception as e:
+        logger.error("delete_duplicates_error", error=str(e))
+        return 0
