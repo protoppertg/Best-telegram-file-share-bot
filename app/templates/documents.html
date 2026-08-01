@@ -7,7 +7,7 @@
         <button type="submit" class="bg-blue-600 text-white px-4 rounded-r">Search</button>
     </form>
 </div>
-<div class="bg-white rounded-lg shadow overflow-hidden">
+<div class="bg-white rounded-lg shadow overflow-hidden mb-6">
     <table class="min-w-full">
         <thead class="bg-gray-50">
             <tr>
@@ -46,5 +46,18 @@
             {% endfor %}
         </tbody>
     </table>
+</div>
+
+<!-- Pagination Buttons -->
+<div class="flex justify-center items-center space-x-4 mb-6">
+    {% if page > 1 %}
+    <a href="/admin/documents?page={{ page - 1 }}{% if q %}&q={{ q }}{% endif %}" class="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300">← Previous</a>
+    {% endif %}
+    
+    <span class="text-gray-700 font-medium">Page {{ page }} of {{ total_pages }}</span>
+    
+    {% if page < total_pages %}
+    <a href="/admin/documents?page={{ page + 1 }}{% if q %}&q={{ q }}{% endif %}" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">Next →</a>
+    {% endif %}
 </div>
 {% endblock %}
