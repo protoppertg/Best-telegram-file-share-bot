@@ -258,3 +258,8 @@ async def admin_unban_user(telegram_id: int):
 async def admin_reset_search(telegram_id: int):
     await user_service.reset_search_count(telegram_id)
     return RedirectResponse(url=f"/admin/users/{telegram_id}", status_code=303)
+@router.post("/documents/delete_duplicates", dependencies=[Depends(verify_admin)])
+async def admin_delete_duplicates():
+    async with get_session() as session:
+        deleted_count = await doc_service.delete_duplicates(session)
+    return RedirectResponse(url=f"/admin/documents?status=deduped&count={deleted_count}", status_code=303)
