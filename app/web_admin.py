@@ -83,6 +83,7 @@ async def admin_settings(request: Request):
         post_file_msg = await get_setting(session, "post_file_message", "")
         start_text = await get_setting(session, "start_text", "")
         about_text = await get_setting(session, "about_text", "")
+        premium_text = await get_setting(session, "premium_text", "")
         channels = await get_force_sub_channels(session)
         
     return templates.TemplateResponse(request, "settings.html", {
@@ -93,6 +94,7 @@ async def admin_settings(request: Request):
         "post_file_message": post_file_msg,
         "start_text": start_text,
         "about_text": about_text,
+        "premium_text": premium_text,
         "channels": channels,
         "active": "settings"
     })
@@ -106,7 +108,8 @@ async def admin_settings_post(
     protect_forwarding: str = Form("off"),
     post_file_message: str = Form(""),
     start_text: str = Form(""),
-    about_text: str = Form("")
+    about_text: str = Form(""),
+    premium_text: str = Form("")
 ):
     async with get_session() as session:
         s_val = "true" if search_enabled == "on" else "false"
@@ -147,6 +150,11 @@ async def admin_settings_post(
         at_setting = at_setting.scalar_one_or_none()
         if not at_setting: session.add(BotSetting(key="about_text", value=about_text))
         else: at_setting.value = about_text
+            
+        pt_setting = await session.execute(select(BotSetting).where(BotSetting.key == "premium_text"))
+        pt_setting = pt_setting.scalar_one_or_none()
+        if not pt_setting: session.add(BotSetting(key="premium_text", value=premium_text))
+        else: pt_setting.value = premium_text
             
     return RedirectResponse(url="/admin/settings", status_code=303)
 
