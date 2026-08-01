@@ -304,18 +304,18 @@ async def auto_index_channel_post(message: Message, bot: Bot):
             subject="Uncategorized", category="Uncategorized", approved=True
         )
 
-    for admin_id in settings.admin_ids_list:
-        try:
-            await bot.send_message(
-                admin_id,
-                f"📥 <b>Auto-Indexed File</b>\n\n"
-                f"📁 Name: <code>{escape(file_name)}</code>\n"
-                f"🆔 ID: {doc.id}\n\n"
-                f"Use the command below to update its metadata so users can find it:\n"
-                f"<code>/edit_doc {doc.id} subject=Physics category=PYQ year=2023</code>"
-            )
-        except Exception:
-            pass
+    #for admin_id in settings.admin_ids_list:
+        #try:
+            #await bot.send_message(
+                #admin_id,
+                #f"📥 <b>Auto-Indexed File</b>\n\n"
+                #f"📁 Name: <code>{escape(file_name)}</code>\n"
+                #f"🆔 ID: {doc.id}\n\n"
+                #f"Use the command below to update its metadata so users can find it:\n"
+                #f"<code>/edit_doc {doc.id} subject=Physics category=PYQ year=2023</code>"
+            #)
+        #except Exception:
+            #pass
 
 # ── Edit Document Metadata ───────────────────────
 
