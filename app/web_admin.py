@@ -168,7 +168,7 @@ async def _web_background_bcast(message: str, user_ids: list[int]):
 
 @router.get("/documents", dependencies=[Depends(verify_admin)], response_class=templates.TemplateResponse)
 async def admin_documents(request: Request, page: int = 1, q: Optional[str] = None):
-    per_page = 15
+    per_page = 25
     async with get_session() as session:
         if q: stmt = select(Document).where(Document.file_name.ilike(f"%{q}%"))
         else: stmt = select(Document)
