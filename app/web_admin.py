@@ -81,6 +81,8 @@ async def admin_settings(request: Request):
         ad_seconds = await get_setting(session, "auto_delete_seconds", "3600")
         protect_fwd = await get_setting(session, "protect_forwarding", "false")
         post_file_msg = await get_setting(session, "post_file_message", "")
+        start_text = await get_setting(session, "start_text", "")
+        about_text = await get_setting(session, "about_text", "")
         channels = await get_force_sub_channels(session)
         
     return templates.TemplateResponse(request, "settings.html", {
@@ -89,6 +91,8 @@ async def admin_settings(request: Request):
         "ad_seconds": ad_seconds,
         "protect_forwarding": protect_fwd == "true",
         "post_file_message": post_file_msg,
+        "start_text": start_text,
+        "about_text": about_text,
         "channels": channels,
         "active": "settings"
     })
@@ -100,7 +104,9 @@ async def admin_settings_post(
     auto_delete_enabled: str = Form("off"),
     auto_delete_seconds: str = Form("3600"),
     protect_forwarding: str = Form("off"),
-    post_file_message: str = Form("")
+    post_file_message: str = Form(""),
+    start_text: str = Form(""),
+    about_text: str = Form("")
 ):
     async with get_session() as session:
         s_val = "true" if search_enabled == "on" else "false"
@@ -131,6 +137,16 @@ async def admin_settings_post(
         pfm_setting = pfm_setting.scalar_one_or_none()
         if not pfm_setting: session.add(BotSetting(key="post_file_message", value=post_file_message))
         else: pfm_setting.value = post_file_message
+            
+        st_setting = await session.execute(select(BotSetting).where(BotSetting.key == "start_text"))
+        st_setting = st_setting.scalar_one_or_none()
+        if not st_setting: session.add(BotSetting(key="start_text", value=start_text))
+        else: st_setting.value = start_text
+            
+        at_setting = await session.execute(select(BotSetting).where(BotSetting.key == "about_text"))
+        at_setting = at_setting.scalar_one_or_none()
+        if not at_setting: session.add(BotSetting(key="about_text", value=about_text))
+        else: at_setting.value = about_text
             
     return RedirectResponse(url="/admin/settings", status_code=303)
 
