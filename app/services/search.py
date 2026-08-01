@@ -1,4 +1,4 @@
-"""PostgreSQL full-text search service (Advanced Filter Version)."""
+"""PostgreSQL full-text search service (Smart Word-Splitting Version)."""
 
 from __future__ import annotations
 
@@ -21,37 +21,6 @@ class SearchRow:
     class_name: Optional[str]
     year: Optional[int]
 
-SEARCH_SQL = text("""
-    SELECT d.id, d.file_name, d.subject, d.category, d.class_name, d.year
-    FROM documents d
-    WHERE d.approved = true AND (
-        d.file_name ILIKE '%' || :q || '%' OR 
-        coalesce(d.subject, '') ILIKE '%' || :q || '%' OR
-        coalesce(d.category, '') ILIKE '%' || :q || '%' OR
-        coalesce(d.class_name, '') ILIKE '%' || :q || '%'
-    )
-    AND (:subject IS NULL OR d.subject ILIKE '%' || :subject || '%')
-    AND (:class_name IS NULL OR d.class_name ILIKE '%' || :class_name || '%')
-    AND (:year IS NULL OR d.year = :year)
-    ORDER BY 
-        CASE WHEN d.file_name ILIKE :q || '%' THEN 0 ELSE 1 END,
-        d.created_at DESC
-    LIMIT :limit OFFSET :offset
-""")
-
-COUNT_SQL = text("""
-    SELECT COUNT(*) FROM documents d
-    WHERE d.approved = true AND (
-        d.file_name ILIKE '%' || :q || '%' OR 
-        coalesce(d.subject, '') ILIKE '%' || :q || '%' OR
-        coalesce(d.category, '') ILIKE '%' || :q || '%' OR
-        coalesce(d.class_name, '') ILIKE '%' || :q || '%'
-    )
-    AND (:subject IS NULL OR d.subject ILIKE '%' || :subject || '%')
-    AND (:class_name IS NULL OR d.class_name ILIKE '%' || :class_name || '%')
-    AND (:year IS NULL OR d.year = :year)
-""")
-
 async def search_documents(
     session: AsyncSession, 
     query: str, 
@@ -63,8 +32,58 @@ async def search_documents(
 ) -> tuple[List[SearchRow], int]:
     per_page = per_page or settings.SEARCH_RESULTS_PER_PAGE
     offset = (page - 1) * per_page
-    normalized = query.strip()
-    cache_key = f"search:{normalized}:{page}:{subject}:{class_name}:{year}"
+    
+    # Split the query into individual words
+    words = [w for w in query.strip().split() if w]
+    if not words:
+        words = [""] # Fallback if only filters are used
+
+    # Dynamically build the SQL so every word must exist somewhere in the text
+    where_clauses = []
+    params = {
+        "limit": per_page, 
+        "offset": offset,
+        "subject": subject,
+        "class_name": class_name,
+        "year": year,
+        "q_start": words[0] + "%" # Used to prioritize files starting with the first word
+    }
+
+    for i, word in enumerate(words):
+        param_name = f"w_{i}"
+        params[param_name] = f"%{word}%"
+        where_clauses.append(f"""(
+            d.file_name ILIKE :{param_name} OR 
+            coalesce(d.subject, '') ILIKE :{param_name} OR
+            coalesce(d.category, '') ILIKE :{param_name} OR
+            coalesce(d.class_name, '') ILIKE :{param_name}
+        )""")
+    
+    # Join with AND so ALL words must be present, but in any order
+    word_filter = " AND ".join(where_clauses)
+
+    SEARCH_SQL = text(f"""
+        SELECT d.id, d.file_name, d.subject, d.category, d.class_name, d.year
+        FROM documents d
+        WHERE d.approved = true AND ({word_filter})
+        AND (:subject IS NULL OR d.subject ILIKE '%' || :subject || '%')
+        AND (:class_name IS NULL OR d.class_name ILIKE '%' || :class_name || '%')
+        AND (:year IS NULL OR d.year = :year)
+        ORDER BY 
+            CASE WHEN d.file_name ILIKE :q_start THEN 0 ELSE 1 END,
+            d.created_at DESC
+        LIMIT :limit OFFSET :offset
+    """)
+
+    COUNT_SQL = text(f"""
+        SELECT COUNT(*) FROM documents d
+        WHERE d.approved = true AND ({word_filter})
+        AND (:subject IS NULL OR d.subject ILIKE '%' || :subject || '%')
+        AND (:class_name IS NULL OR d.class_name ILIKE '%' || :class_name || '%')
+        AND (:year IS NULL OR d.year = :year)
+    """)
+
+    cache_key = f"search:{query}:{page}:{subject}:{class_name}:{year}"
     
     cache = await get_cache()
     cached = await cache.get(cache_key)
@@ -72,14 +91,6 @@ async def search_documents(
         return [SearchRow(**r) for r in cached["rows"]], cached["total"]
 
     try:
-        params = {
-            "q": normalized, 
-            "limit": per_page, 
-            "offset": offset,
-            "subject": subject,
-            "class_name": class_name,
-            "year": year
-        }
         result = await session.execute(SEARCH_SQL, params)
         raw_rows = result.fetchall()
         
