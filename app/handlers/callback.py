@@ -1,8 +1,9 @@
-"""Inline button callback handlers: get file, pagination, new search, auto-delete, protect content."""
+"""Inline button callback handlers: get file, pagination, new search, auto-delete, protect content, force sub verify."""
 
 from __future__ import annotations
 
 import asyncio
+import json
 from html import escape
 from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramBadRequest
@@ -18,7 +19,7 @@ from app.services.cache import get_cache
 from app.services.search import search_documents
 from app.services.telegram import send_document_to_user
 from app.services.shortlink import get_shortlink
-from app.utils.keyboards import after_file_keyboard, search_results_keyboard
+from app.utils.keyboards import after_file_keyboard, search_results_keyboard, main_menu_kb
 from app.utils.logger import logger
 from app.utils.validators import sanitise_text
 
@@ -64,8 +65,60 @@ async def noop_callback(callback: CallbackQuery):
 
 
 @router.callback_query(F.data == "check_sub")
-async def check_sub_callback(callback: CallbackQuery):
-    await callback.answer("If you joined, please try your request again.", show_alert=True)
+async def check_sub_callback(callback: CallbackQuery, bot: Bot):
+    """Verifies if the user joined the channels. If yes, sends the start message."""
+    async with get_session() as session:
+        res = await session.execute(select(BotSetting).where(BotSetting.key == "force_sub_channels"))
+        s = res.scalar_one_or_none()
+        channels = []
+        if s and s.value:
+            try: channels = json.loads(s.value)
+            except: pass
+            
+        missing_channels = []
+        for ch in channels:
+            try:
+                chat_id = int(ch['id'])
+                member = await bot.get_chat_member(chat_id=chat_id, user_id=callback.from_user.id)
+                if member.status in ["left", "kicked"]:
+                    missing_channels.append(ch)
+            except Exception as e:
+                logger.error("force_sub_verify_error", error=str(e))
+
+        if missing_channels:
+            await callback.answer("You haven't joined all channels yet!", show_alert=True)
+        else:
+            # Successfully joined! Send welcome message.
+            await callback.answer("Verification successful! Welcome aboard. 🎉", show_alert=False)
+            
+            # Fetch custom start text if it exists
+            text_setting = await session.execute(select(BotSetting).where(BotSetting.key == "start_text"))
+            text_setting = text_setting.scalar_one_or_none()
+            
+            default_text = (
+                "✨ <b>Welcome to PrepCore!</b> ✨\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                "📚 Your ultimate library for study materials.\n"
+                "Find notes, PYQs, and books in seconds!\n\n"
+                "🛠 <b>How to use me:</b>\n"
+                "┣👉 <b>Search:</b> Type keywords or use advanced filters.\n"
+                "┣👉 <b>Upload:</b> Send a PDF to support the community.\n"
+                "┗👉 <b>Premium:</b> Unlock unlimited searches & ad-free downloads.\n\n"
+                "💡 <b>Advanced Search Tip:</b>\n"
+                "You can filter your search using tags!\n"
+                "<code>physics subject:Math class:10 year:2023</code>\n\n"
+                "<i>Ready to dive in? Just type a keyword below!</i>"
+            )
+            text = text_setting.value if text_setting and text_setting.value else default_text
+            
+            # Delete the old "You must join" message
+            try:
+                await callback.message.delete()
+            except Exception:
+                pass
+                
+            # Send the welcome message with the main menu
+            await bot.send_message(callback.from_user.id, text, reply_markup=main_menu_kb())
 
 
 @router.callback_query(F.data == "search_again")
