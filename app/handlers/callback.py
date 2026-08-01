@@ -133,11 +133,20 @@ async def _send_file_to_user(bot: Bot, callback: CallbackQuery, doc, bot_setting
     protect = bot_settings["protect_forwarding"]
     post_file_msg = bot_settings["post_file_message"]
     
+    # Removed file name from caption
+    caption_parts = []
+    if doc.subject:
+        caption_parts.append(f"📚 {escape(doc.subject)}")
+    if doc.category:
+        caption_parts.append(f"🏷️ {escape(doc.category)}")
+    
+    caption = " | ".join(caption_parts) if caption_parts else None
+    
     sent_file_msg = await bot.send_document(
         chat_id=callback.from_user.id, 
         document=doc.file_id, 
         protect_content=protect, 
-        caption=f"📄 <b>{escape(sanitise_text(doc.file_name, 100))}</b>\n📚 {escape(doc.subject or 'N/A')} | 🏷️ {escape(doc.category or 'N/A')}"
+        caption=caption
     )
 
     msg_ids_to_delete = [sent_file_msg.message_id]
@@ -153,8 +162,9 @@ async def _send_file_to_user(bot: Bot, callback: CallbackQuery, doc, bot_setting
         for msg_id in msg_ids_to_delete:
             asyncio.create_task(_schedule_auto_delete(bot, callback.from_user.id, msg_id, ad_seconds))
 
+    # Update the search results message to show it was sent
     try:
-        await callback.message.edit_text(f"✅ File sent: <b>{escape(sanitise_text(doc.file_name, 100))}</b>", reply_markup=after_file_keyboard(query_key, page))
+        await callback.message.edit_text(f"✅ File sent successfully.", reply_markup=after_file_keyboard(query_key, page))
     except TelegramBadRequest: pass
 
 
