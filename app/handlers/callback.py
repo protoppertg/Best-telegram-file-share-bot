@@ -16,7 +16,6 @@ from app.models import BotSetting, User
 from app.services import document as doc_service
 from app.services.cache import get_cache
 from app.services.search import search_documents
-from app.services.telegram import send_document_to_user
 from app.services.shortlink import get_shortlink
 from app.utils.keyboards import after_file_keyboard, search_results_keyboard
 from app.utils.logger import logger
@@ -33,7 +32,8 @@ async def _get_settings(session) -> dict:
     data = {
         "auto_delete_enabled": False,
         "auto_delete_seconds": 3600,
-        "protect_forwarding": False
+        "protect_forwarding": False,
+        "post_file_message": ""
     }
     
     for row in settings_rows:
@@ -43,6 +43,8 @@ async def _get_settings(session) -> dict:
             data["auto_delete_seconds"] = int(row.value)
         elif row.key == "protect_forwarding" and row.value == "true":
             data["protect_forwarding"] = True
+        elif row.key == "post_file_message":
+            data["post_file_message"] = row.value or ""
             
     return data
 
@@ -74,22 +76,40 @@ async def search_again(callback: CallbackQuery):
 
 
 async def _send_file_to_user(bot: Bot, callback: CallbackQuery, doc, bot_settings: dict, query_key: str, page: int):
-    """Helper to send file and apply auto-delete and protect content."""
+    """Helper to send file, send post-file text, and apply auto-delete to both."""
     
     is_ad_enabled = bot_settings["auto_delete_enabled"]
     ad_seconds = bot_settings["auto_delete_seconds"]
     protect = bot_settings["protect_forwarding"]
+    post_file_msg = bot_settings["post_file_message"]
     
-    sent_msg = await bot.send_document(
+    # 1. Send the File
+    sent_file_msg = await bot.send_document(
         chat_id=callback.from_user.id, 
         document=doc.file_id, 
-        protect_content=protect, # This disables forwarding/saving
+        protect_content=protect, 
         caption=f"📄 <b>{escape(sanitise_text(doc.file_name, 100))}</b>\n📚 {escape(doc.subject or 'N/A')} | 🏷️ {escape(doc.category or 'N/A')}"
     )
 
+    # Keep track of all message IDs sent so we can delete them all if Auto-Delete is on
+    msg_ids_to_delete = [sent_file_msg.message_id]
+
+    # 2. Send the Custom Text Message (if configured)
+    if post_file_msg:
+        try:
+            sent_text_msg = await bot.send_message(
+                chat_id=callback.from_user.id, 
+                text=post_file_msg, 
+                protect_content=protect
+            )
+            msg_ids_to_delete.append(sent_text_msg.message_id)
+        except Exception as e:
+            logger.error("post_file_message_send_failed", error=str(e))
+
+    # 3. Schedule Auto-Delete for both the file and the text message
     if is_ad_enabled and ad_seconds > 0:
-        asyncio.create_task(_schedule_auto_delete(bot, callback.from_user.id, sent_msg.message_id, ad_seconds))
-        await callback.message.answer(f"⏳ <i>This file will be automatically deleted from your chat in {ad_seconds} seconds to prevent piracy. Save it now if you need it.</i>")
+        for msg_id in msg_ids_to_delete:
+            asyncio.create_task(_schedule_auto_delete(bot, callback.from_user.id, msg_id, ad_seconds))
 
     try:
         await callback.message.edit_text(f"✅ File sent: <b>{escape(sanitise_text(doc.file_name, 100))}</b>", reply_markup=after_file_keyboard(query_key, page))
