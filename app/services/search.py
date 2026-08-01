@@ -1,4 +1,4 @@
-"""PostgreSQL full-text search service (Smart Word-Splitting Version)."""
+"""PostgreSQL full-text search service (Dynamic SQL Version)."""
 
 from __future__ import annotations
 
@@ -38,14 +38,11 @@ async def search_documents(
     if not words:
         words = [""] # Fallback if only filters are used
 
-    # Dynamically build the SQL so every word must exist somewhere in the text
-    where_clauses = []
+    # Dynamically build the WHERE clause and params
+    where_clauses = ["d.approved = true"]
     params = {
         "limit": per_page, 
         "offset": offset,
-        "subject": subject,
-        "class_name": class_name,
-        "year": year,
         "q_start": words[0] + "%" # Used to prioritize files starting with the first word
     }
 
@@ -59,16 +56,25 @@ async def search_documents(
             coalesce(d.class_name, '') ILIKE :{param_name}
         )""")
     
-    # Join with AND so ALL words must be present, but in any order
-    word_filter = " AND ".join(where_clauses)
+    # Only add filters to SQL if they are actually provided (prevents None type crashes)
+    if subject:
+        params["subject"] = f"%{subject}%"
+        where_clauses.append("d.subject ILIKE :subject")
+    
+    if class_name:
+        params["class_name"] = f"%{class_name}%"
+        where_clauses.append("d.class_name ILIKE :class_name")
+        
+    if year:
+        params["year"] = year
+        where_clauses.append("d.year = :year")
+
+    where_clause_str = " AND ".join(where_clauses)
 
     SEARCH_SQL = text(f"""
         SELECT d.id, d.file_name, d.subject, d.category, d.class_name, d.year
         FROM documents d
-        WHERE d.approved = true AND ({word_filter})
-        AND (:subject IS NULL OR d.subject ILIKE '%' || :subject || '%')
-        AND (:class_name IS NULL OR d.class_name ILIKE '%' || :class_name || '%')
-        AND (:year IS NULL OR d.year = :year)
+        WHERE {where_clause_str}
         ORDER BY 
             CASE WHEN d.file_name ILIKE :q_start THEN 0 ELSE 1 END,
             d.created_at DESC
@@ -77,10 +83,7 @@ async def search_documents(
 
     COUNT_SQL = text(f"""
         SELECT COUNT(*) FROM documents d
-        WHERE d.approved = true AND ({word_filter})
-        AND (:subject IS NULL OR d.subject ILIKE '%' || :subject || '%')
-        AND (:class_name IS NULL OR d.class_name ILIKE '%' || :class_name || '%')
-        AND (:year IS NULL OR d.year = :year)
+        WHERE {where_clause_str}
     """)
 
     cache_key = f"search:{query}:{page}:{subject}:{class_name}:{year}"
