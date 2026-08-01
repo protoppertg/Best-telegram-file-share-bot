@@ -16,6 +16,7 @@ from app.models import BotSetting, User
 from app.services import document as doc_service
 from app.services.cache import get_cache
 from app.services.search import search_documents
+from app.services.telegram import send_document_to_user
 from app.services.shortlink import get_shortlink
 from app.utils.keyboards import after_file_keyboard, search_results_keyboard
 from app.utils.logger import logger
@@ -25,7 +26,6 @@ router = Router()
 
 
 async def _get_settings(session) -> dict:
-    """Fetch all bot settings in one go."""
     result = await session.execute(select(BotSetting))
     settings_rows = result.scalars().all()
     
@@ -50,7 +50,6 @@ async def _get_settings(session) -> dict:
 
 
 async def _schedule_auto_delete(bot: Bot, chat_id: int, message_id: int, delay: int):
-    """Background task to delete a message after a specified delay."""
     try:
         await asyncio.sleep(delay)
         await bot.delete_message(chat_id=chat_id, message_id=message_id)
@@ -76,14 +75,11 @@ async def search_again(callback: CallbackQuery):
 
 
 async def _send_file_to_user(bot: Bot, callback: CallbackQuery, doc, bot_settings: dict, query_key: str, page: int):
-    """Helper to send file, send post-file text, and apply auto-delete to both."""
-    
     is_ad_enabled = bot_settings["auto_delete_enabled"]
     ad_seconds = bot_settings["auto_delete_seconds"]
     protect = bot_settings["protect_forwarding"]
     post_file_msg = bot_settings["post_file_message"]
     
-    # 1. Send the File
     sent_file_msg = await bot.send_document(
         chat_id=callback.from_user.id, 
         document=doc.file_id, 
@@ -91,22 +87,15 @@ async def _send_file_to_user(bot: Bot, callback: CallbackQuery, doc, bot_setting
         caption=f"📄 <b>{escape(sanitise_text(doc.file_name, 100))}</b>\n📚 {escape(doc.subject or 'N/A')} | 🏷️ {escape(doc.category or 'N/A')}"
     )
 
-    # Keep track of all message IDs sent so we can delete them all if Auto-Delete is on
     msg_ids_to_delete = [sent_file_msg.message_id]
 
-    # 2. Send the Custom Text Message (if configured)
     if post_file_msg:
         try:
-            sent_text_msg = await bot.send_message(
-                chat_id=callback.from_user.id, 
-                text=post_file_msg, 
-                protect_content=protect
-            )
+            sent_text_msg = await bot.send_message(chat_id=callback.from_user.id, text=post_file_msg, protect_content=protect)
             msg_ids_to_delete.append(sent_text_msg.message_id)
         except Exception as e:
             logger.error("post_file_message_send_failed", error=str(e))
 
-    # 3. Schedule Auto-Delete for both the file and the text message
     if is_ad_enabled and ad_seconds > 0:
         for msg_id in msg_ids_to_delete:
             asyncio.create_task(_schedule_auto_delete(bot, callback.from_user.id, msg_id, ad_seconds))
@@ -188,15 +177,23 @@ async def search_pagination(callback: CallbackQuery):
     page = int(parts[2])
 
     cache = await get_cache()
-    query = await cache.get(f"searchq:{query_key}")
+    cache_data = await cache.get(f"searchq:{query_key}")
 
-    if not query:
+    if not cache_data:
         await callback.answer("Search session expired. Please search again.", show_alert=True)
         await callback.message.edit_text("🔍 Your search session has expired.\nType a new query or use /search.")
         return
 
+    query = cache_data.get("query", " ")
+    subject = cache_data.get("subject")
+    class_name = cache_data.get("class_name")
+    year = cache_data.get("year")
+
     async with get_session() as session:
-        results, total = await search_documents(session, query, page=page)
+        results, total = await search_documents(
+            session, query, page=page, 
+            subject=subject, class_name=class_name, year=year
+        )
 
     if not results:
         await callback.answer("No more results.", show_alert=True)
@@ -204,7 +201,14 @@ async def search_pagination(callback: CallbackQuery):
 
     per_page = settings.SEARCH_RESULTS_PER_PAGE
     total_pages = max(1, (total + per_page - 1) // per_page)
-    text = f"🔍 <b>Search: {escape(sanitise_text(query, 100))}</b>\n📊 Found <b>{total}</b> result(s) — Page {page}/{total_pages}\n\nTap a file to download:"
+    
+    display_q = "All files" if query.strip() == " " else query
+    header_text = f"🔍 <b>Search: {escape(sanitise_text(display_q, 100))}</b>"
+    if subject: header_text += f"\n📚 Subject: {escape(subject)}"
+    if class_name: header_text += f"\n🎓 Class: {escape(class_name)}"
+    if year: header_text += f"\n📅 Year: {year}"
+    
+    text = f"{header_text}\n📊 Found <b>{total}</b> result(s) — Page {page}/{total_pages}\n\nTap a file to download:"
 
     try:
         await callback.message.edit_text(text, reply_markup=search_results_keyboard(results, query_key, page, total_pages))
