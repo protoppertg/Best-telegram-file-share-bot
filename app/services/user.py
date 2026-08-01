@@ -85,9 +85,19 @@ async def activate_premium(telegram_id: int, duration_days: int) -> bool:
         result = await session.execute(select(User).where(User.telegram_id == telegram_id))
         user = result.scalar_one_or_none()
         if not user: return False
+        
         user.is_premium = True
-        base = user.premium_expiry if user.is_premium and user.premium_expiry else datetime.now(timezone.utc)
-        user.premium_expiry = base + timedelta(days=duration_days)
+        now = datetime.now(timezone.utc)
+        
+        # If user already has active premium, extend from current expiry. Else, start from now.
+        base = user.premium_expiry if user.is_premium and user.premium_expiry and user.premium_expiry > now else now
+        
+        if duration_days == 0:
+            # 0 means Lifetime (100 years)
+            user.premium_expiry = base + timedelta(days=36500)
+        else:
+            user.premium_expiry = base + timedelta(days=duration_days)
+            
         await session.flush()
         return True
 
