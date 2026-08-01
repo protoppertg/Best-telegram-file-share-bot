@@ -14,6 +14,7 @@
                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">ID</th>
                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">File Name</th>
                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Subject</th>
+                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Class</th>
                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
             </tr>
@@ -24,6 +25,7 @@
                 <td class="px-6 py-4 text-sm">{{ doc.id }}</td>
                 <td class="px-6 py-4 text-sm font-medium">{{ doc.file_name[:50] }}{% if doc.file_name|length > 50 %}...{% endif %}</td>
                 <td class="px-6 py-4 text-sm">{{ doc.subject or '-' }}</td>
+                <td class="px-6 py-4 text-sm">{{ doc.class_name or '-' }}</td>
                 <td class="px-6 py-4 text-sm">
                     {% if doc.approved %}
                     <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">Approved</span>
@@ -40,7 +42,7 @@
                 </td>
             </tr>
             {% else %}
-            <tr><td colspan="5" class="px-6 py-4 text-center text-gray-500">No documents found.</td></tr>
+            <tr><td colspan="6" class="px-6 py-4 text-center text-gray-500">No documents found.</td></tr>
             {% endfor %}
         </tbody>
     </table>
