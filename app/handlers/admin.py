@@ -292,7 +292,7 @@ async def auto_index_channel_post(message: Message, bot: Bot):
 
     file_id = message.document.file_id
     file_name = message.document.file_name or "Untitled.pdf"
-   message_id = message.message_id
+    message_id = message.message_id
 
     async with get_session() as session:
         result = await session.execute(select(Document).where(Document.file_id == file_id))
