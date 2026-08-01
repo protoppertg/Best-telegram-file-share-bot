@@ -21,6 +21,11 @@ from app.web_admin import router as web_admin_router
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     setup_logging()
+    
+    # Force database tables and columns to exist (bypasses Alembic)
+    from app.database import force_schema_sync
+    await force_schema_sync()
+    
     setup_dispatcher(dp)
     await get_cache()
 
