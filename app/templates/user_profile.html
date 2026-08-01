@@ -39,8 +39,9 @@
                 <button type="submit" class="w-full bg-yellow-50 text-yellow-700 px-4 py-2.5 rounded-xl hover:bg-yellow-100 transition border border-yellow-100">Revoke Premium</button>
             </form>
             {% else %}
-            <form method="POST" action="/admin/users/{{ u.telegram_id }}/grant_premium">
-                <button type="submit" class="w-full bg-yellow-50 text-yellow-700 px-4 py-2.5 rounded-xl hover:bg-yellow-100 transition border border-yellow-100">Grant Premium (30d)</button>
+            <form method="POST" action="/admin/users/{{ u.telegram_id }}/grant_premium" class="flex space-x-2">
+                <input type="number" name="days" value="30" class="w-24 border border-gray-200 p-2.5 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition" min="0" max="36500" placeholder="Days">
+                <button type="submit" class="flex-1 bg-yellow-50 text-yellow-700 px-4 py-2.5 rounded-xl hover:bg-yellow-100 transition border border-yellow-100">Grant Premium (0=Lifetime)</button>
             </form>
             {% endif %}
 
