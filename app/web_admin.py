@@ -1,5 +1,7 @@
 """FastAPI Web Admin Panel Router."""
+
 from __future__ import annotations
+
 from typing import Optional
 from pathlib import Path
 import asyncio
@@ -19,8 +21,10 @@ from app.services import document as doc_service
 from app.utils.logger import logger
 
 router = APIRouter(prefix="/admin")
+
 BASE_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+
 
 async def verify_admin(request: Request):
     if not request.session.get("is_admin"):
@@ -168,7 +172,7 @@ async def _web_background_bcast(message: str, user_ids: list[int]):
 
 @router.get("/documents", dependencies=[Depends(verify_admin)], response_class=templates.TemplateResponse)
 async def admin_documents(request: Request, page: int = 1, q: Optional[str] = None):
-    per_page = 25
+    per_page = 50
     async with get_session() as session:
         if q: stmt = select(Document).where(Document.file_name.ilike(f"%{q}%"))
         else: stmt = select(Document)
@@ -206,6 +210,12 @@ async def admin_approve_doc(doc_id: int):
 async def admin_delete_doc(doc_id: int):
     async with get_session() as session: await doc_service.delete_document(session, doc_id)
     return Response(status_code=200)
+
+@router.post("/documents/delete_duplicates", dependencies=[Depends(verify_admin)])
+async def admin_delete_duplicates():
+    async with get_session() as session:
+        deleted_count = await doc_service.delete_duplicates(session)
+    return RedirectResponse(url=f"/admin/documents?status=deduped&count={deleted_count}", status_code=303)
 
 @router.get("/users", dependencies=[Depends(verify_admin)], response_class=templates.TemplateResponse)
 async def admin_users(request: Request, page: int = 1, q: Optional[str] = None):
@@ -258,8 +268,3 @@ async def admin_unban_user(telegram_id: int):
 async def admin_reset_search(telegram_id: int):
     await user_service.reset_search_count(telegram_id)
     return RedirectResponse(url=f"/admin/users/{telegram_id}", status_code=303)
-@router.post("/documents/delete_duplicates", dependencies=[Depends(verify_admin)])
-async def admin_delete_duplicates():
-    async with get_session() as session:
-        deleted_count = await doc_service.delete_duplicates(session)
-    return RedirectResponse(url=f"/admin/documents?status=deduped&count={deleted_count}", status_code=303)
