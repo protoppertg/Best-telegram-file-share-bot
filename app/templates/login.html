@@ -5,19 +5,23 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Admin Login</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+        .glass { background: rgba(255, 255, 255, 0.7); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); }
+    </style>
 </head>
-<body class="bg-gray-900 flex items-center justify-center min-h-screen">
-    <div class="bg-gray-800 p-8 rounded-lg shadow-lg w-96">
-        <h1 class="text-2xl text-white font-bold mb-6 text-center">📚 PrepCore Admin</h1>
+<body class="bg-gray-100 flex items-center justify-center min-h-screen">
+    <div class="glass p-8 rounded-2xl shadow-xl border border-white/50 w-96">
+        <h1 class="text-2xl text-gray-900 font-bold mb-6 text-center">📚 PrepCore Admin</h1>
         {% if error %}
-        <div class="bg-red-600 text-white p-3 rounded mb-4 text-sm text-center">{{ error }}</div>
+        <div class="bg-red-50 text-red-600 p-3 rounded-xl mb-4 text-sm text-center border border-red-100">{{ error }}</div>
         {% endif %}
         <form method="POST" action="/admin/login">
-            <div class="mb-4">
-                <label class="block text-gray-400 mb-2">Password</label>
-                <input type="password" name="password" required class="w-full bg-gray-700 text-white p-3 rounded focus:outline-none focus:ring-2 focus:ring-blue-600">
+            <div class="mb-6">
+                <label class="block text-gray-600 mb-2 text-sm">Password</label>
+                <input type="password" name="password" required class="w-full bg-white/50 border border-gray-200 text-gray-900 p-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition" autofocus>
             </div>
-            <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded transition">Login</button>
+            <button type="submit" class="w-full bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 rounded-xl transition shadow-sm">Login</button>
         </form>
     </div>
 </body>
