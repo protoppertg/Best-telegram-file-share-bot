@@ -114,12 +114,16 @@ async def cmd_usage(message: Message, db_user: User | None = None):
 @router.message(F.text == "🎟️ Premium")
 @router.message(Command("premium"))
 async def cmd_premium(message: Message, db_user: User | None = None):
+    async with get_session() as session:
+        text_setting = await session.execute(select(BotSetting).where(BotSetting.key == "premium_text"))
+        text_setting = text_setting.scalar_one_or_none()
+        
     if db_user and db_user.is_premium and db_user.premium_expiry:
         status = f"✅ <b>Active</b> until {db_user.premium_expiry.strftime('%Y-%m-%d %H:%M UTC')}"
     else:
         status = "❌ <b>Not active</b>"
 
-    text = (
+    default_text = (
         f"🎟️ <b>Premium Status</b>\n\n"
         f"Status: {status}\n\n"
         f"<b>Premium Benefits:</b>\n"
@@ -129,6 +133,7 @@ async def cmd_premium(message: Message, db_user: User | None = None):
         f"<b>How to get Premium:</b>\n"
         f"Send a Rs. 100 gift card to the admin. Once verified, the admin will grant you premium status manually."
     )
+    text = text_setting.value if text_setting and text_setting.value else default_text
     await message.answer(text)
 
 
