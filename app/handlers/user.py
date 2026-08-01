@@ -131,7 +131,9 @@ async def cmd_premium(message: Message, db_user: User | None = None):
         f"• {settings.PREMIUM_UPLOAD_LIMIT} uploads per day (vs {settings.FREE_UPLOAD_LIMIT} free)\n"
         f"• No ads/short links when downloading files\n\n"
         f"<b>How to get Premium:</b>\n"
-        f"Send a Rs. 100 gift card to the admin. Once verified, the admin will grant you premium status manually."
+        f"How to get Premium:
+Send a Rs. 100 gift card (Google Play gift card, Flipkart gift card, Amazon gift card)to the @contacttoppers_bot . Once verified, the admin will grant you premium status manually for 30 days. 
+Fake responses will lead to permanent ban from network "
     )
     text = text_setting.value if text_setting and text_setting.value else default_text
     await message.answer(text)
