@@ -41,23 +41,25 @@ class UploadStates(StatesGroup):
 @router.message(Command("start"))
 async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
-    text = (
+    async with get_session() as session:
+        text_setting = await session.execute(select(BotSetting).where(BotSetting.key == "start_text"))
+        text_setting = text_setting.scalar_one_or_none()
+        
+    default_text = (
         "✨ <b>Welcome to PrepCore!</b> ✨\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         "📚 Your ultimate library for study materials.\n"
         "Find notes, PYQs, and books in seconds!\n\n"
-        
         "🛠 <b>How to use me:</b>\n"
         "┣👉 <b>Search:</b> Type keywords or use advanced filters.\n"
         "┣👉 <b>Upload:</b> Send a PDF to support the community.\n"
         "┗👉 <b>Premium:</b> Unlock unlimited searches & ad-free downloads.\n\n"
-        
         "💡 <b>Advanced Search Tip:</b>\n"
         "You can filter your search using tags!\n"
         "<code>physics subject:Math class:10 year:2023</code>\n\n"
-        
         "<i>Ready to dive in? Just type a keyword below!</i>"
     )
+    text = text_setting.value if text_setting and text_setting.value else default_text
     await message.answer(text, reply_markup=main_menu_kb())
 
 
@@ -68,11 +70,9 @@ async def cmd_help(message: Message):
         "📖 <b>Help & Guide</b>\n\n"
         "🔍 <b>Basic Search:</b>\n"
         "Just type what you're looking for (e.g., <code>physics notes</code>).\n\n"
-        
         "🚀 <b>Advanced Search:</b>\n"
         "Use filters to narrow down results instantly!\n"
         "<code>math subject:Physics class:Class 10 year:2023</code>\n\n"
-        
         "📤 <b>Upload:</b> Send a PDF to support the library.\n"
         "🎟️ <b>Premium:</b> Get unlimited searches and ad-free downloads."
     )
@@ -81,12 +81,17 @@ async def cmd_help(message: Message):
 
 @router.message(Command("about"))
 async def cmd_about(message: Message):
-    text = (
+    async with get_session() as session:
+        text_setting = await session.execute(select(BotSetting).where(BotSetting.key == "about_text"))
+        text_setting = text_setting.scalar_one_or_none()
+        
+    default_text = (
         "ℹ️ <b>About PrepCore</b>\n\n"
         "PrepCore is a searchable library of study materials.\n"
         "Search for PDFs, notes, and previous year questions.\n\n"
         "Built with ❤️ using Python and FastAPI."
     )
+    text = text_setting.value if text_setting and text_setting.value else default_text
     await message.answer(text)
 
 
@@ -153,7 +158,6 @@ async def text_search(message: Message, db_user: User | None = None):
 
 
 def _parse_advanced_search(raw_query: str) -> tuple[str, Optional[str], Optional[str], Optional[int]]:
-    """Extracts subject, class, and year filters from the search query."""
     subject = None
     class_name = None
     year = None
