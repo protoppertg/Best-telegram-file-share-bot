@@ -1,18 +1,17 @@
 """Document CRUD operations."""
-
 from __future__ import annotations
-
 from typing import Any, List, Optional
-
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.models import Document
 from app.utils.logger import logger
 
-
-async def create_document(session: AsyncSession, *, file_id: str, message_id: Optional[int] = None, file_name: str, subject: Optional[str] = None, category: Optional[str] = None, university: Optional[str] = None, semester: Optional[str] = None, year: Optional[int] = None, keywords: Optional[List[str]] = None, description: Optional[str] = None, uploaded_by: Optional[int] = None, approved: bool = True) -> Document:
-    doc = Document(file_id=file_id, message_id=message_id, file_name=file_name, subject=subject, category=category, university=university, semester=semester, year=year, keywords=keywords or [], description=description, uploaded_by=uploaded_by, approved=approved)
+async def create_document(session: AsyncSession, *, file_id: str, message_id: Optional[int] = None, file_name: str, subject: Optional[str] = None, category: Optional[str] = None, class_name: Optional[str] = None, year: Optional[int] = None, keywords: Optional[List[str]] = None, description: Optional[str] = None, uploaded_by: Optional[int] = None, approved: bool = True) -> Document:
+    doc = Document(
+        file_id=file_id, message_id=message_id, file_name=file_name, subject=subject, category=category, 
+        class_name=class_name, year=year, keywords=keywords or [], description=description, 
+        uploaded_by=uploaded_by, approved=approved
+    )
     session.add(doc)
     await session.flush()
     return doc
