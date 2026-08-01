@@ -324,8 +324,8 @@ async def cmd_edit_doc(message: Message, command: CommandObject):
     if not command.args:
         await message.answer(
             "Usage: <code>/edit_doc [id] [field]=[value]</code>\n\n"
-            "Fields: file_name, subject, category, university, semester, year, keywords\n\n"
-            "Example: <code>/edit_doc 42 subject=Physics category=PYQ year=2023</code>"
+            "Fields: file_name, subject, category, class_name, year, keywords\n\n"
+            "Example: <code>/edit_doc 42 subject=Physics class_name=Class 10 year=2023</code>"
         )
         return
 
@@ -345,7 +345,7 @@ async def cmd_edit_doc(message: Message, command: CommandObject):
         if "=" not in pair: continue
         field, value = pair.split("=", 1)
         field = field.strip().lower()
-        if field in ("file_name", "subject", "category", "university", "semester"):
+        if field in ("file_name", "subject", "category", "class_name"):
             updates[field] = sanitise_text(value, 255)
         elif field == "year":
             updates[field] = parse_year(value)
