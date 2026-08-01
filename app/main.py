@@ -12,19 +12,17 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from app.bot import bot, dp, on_shutdown, on_startup, setup_dispatcher
 from app.config import settings
-from app.database import engine
+from app.database import engine, init_db
 from app.services.cache import close_cache, get_cache
 from app.utils.logger import logger, setup_logging
 from app.web_admin import router as web_admin_router
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     setup_logging()
     
-    # Force database tables and columns to exist (bypasses Alembic)
-    from app.database import force_schema_sync
-    await force_schema_sync()
+    # Initialize Database (No Alembic needed!)
+    await init_db()
     
     setup_dispatcher(dp)
     await get_cache()
@@ -49,7 +47,6 @@ async def lifespan(app: FastAPI):
     await engine.dispose()
     logger.info("app_stopped")
 
-
 app = FastAPI(title="PrepCore Bot", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
@@ -60,7 +57,6 @@ app.add_middleware(
 )
 
 app.include_router(web_admin_router)
-
 
 @app.post(settings.WEBHOOK_PATH)
 async def webhook(request: Request):
@@ -83,11 +79,9 @@ async def webhook(request: Request):
 
     return JSONResponse({"ok": True})
 
-
 @app.get("/health")
 async def health():
     return {"status": "ok", "bot": settings.BOT_USERNAME or "PrepCore"}
-
 
 async def _polling_loop():
     from aiogram.types import Update
@@ -104,7 +98,6 @@ async def _polling_loop():
         except Exception as exc:
             logger.error("polling_error", error=str(exc), exc_info=True)
             await asyncio.sleep(5)
-
 
 if __name__ == "__main__":
     uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=False)
