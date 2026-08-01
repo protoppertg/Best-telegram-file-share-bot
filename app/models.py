@@ -6,9 +6,9 @@ from datetime import date, datetime
 from typing import List, Optional
 
 from sqlalchemy import (
-    BigInteger, Boolean, Column, Date, DateTime, ForeignKey, Index, Integer, String, Text, func,
+    BigInteger, Boolean, Date, DateTime, ForeignKey, Index, Integer, String, Text, func,
 )
-from sqlalchemy.dialects.postgresql import ARRAY, TSVECTOR
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -48,13 +48,7 @@ class Document(Base):
     approved: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
-    search_vector = Column(TSVECTOR, nullable=True)
     uploader: Mapped[Optional[User]] = relationship(back_populates="documents")
-    __table_args__ = (
-        Index("idx_documents_search_vector", "search_vector", postgresql_using="gin"),
-        Index("idx_documents_file_name_trgm", "file_name", postgresql_using="gin", postgresql_ops={"file_name": "gin_trgm_ops"}),
-        Index("idx_documents_keywords", "keywords", postgresql_using="gin"),
-    )
 
 class Admin(Base):
     __tablename__ = "admins"
