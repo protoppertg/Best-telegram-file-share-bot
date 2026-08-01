@@ -36,6 +36,7 @@ class AuthMiddleware(BaseMiddleware):
                 user = await get_or_create_user(session, telegram_id=tg_user.id, username=tg_user.username, first_name=tg_user.first_name, last_name=tg_user.last_name)
                 await reset_daily_counts_if_needed(session, user)
                 
+                # ── Ban Check ──────────────────────────
                 if user.is_banned:
                     if isinstance(event, CallbackQuery):
                         await event.answer("You are banned from using this bot.", show_alert=True)
@@ -43,18 +44,25 @@ class AuthMiddleware(BaseMiddleware):
                         await bot.send_message(tg_user.id, "🚫 You have been banned from using this bot.")
                     return
                 
+                # ── Force Sub Check ──────────────────────
                 channels = await get_force_sub_channels(session)
                 if channels:
                     missing_channels = []
                     for ch in channels:
                         try:
-                            member = await bot.get_chat_member(chat_id=ch['id'], user_id=tg_user.id)
+                            # Force casting to int is required for Aiogram
+                            chat_id = int(ch['id'])
+                            member = await bot.get_chat_member(chat_id=chat_id, user_id=tg_user.id)
                             if member.status in ["left", "kicked"]:
                                 missing_channels.append(ch)
+                        except ValueError:
+                            logger.error("force_sub_invalid_id", channel_id=ch.get('id'))
                         except Exception as e:
+                            # If bot isn't admin, it will error here. We skip to avoid blocking users accidentally.
                             logger.error("force_sub_check_error", channel=ch.get('id'), error=str(e))
                     
                     if missing_channels:
+                        from aiogram.utils.keyboard import InlineKeyboardBuilder
                         kb = InlineKeyboardBuilder()
                         for ch in missing_channels:
                             kb.button(text=f"📢 Join Channel", url=ch['link'])
