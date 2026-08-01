@@ -21,7 +21,7 @@ from app.services import document as doc_service
 from app.services.search import search_documents
 from app.services.telegram import forward_to_channel
 from app.services.cache import get_cache
-from app.utils.keyboards import after_file_keyboard, category_keyboard, search_results_keyboard, semester_keyboard, main_menu_kb
+from app.utils.keyboards import after_file_keyboard, category_keyboard, search_results_keyboard, main_menu_kb
 from app.utils.logger import logger
 from app.utils.validators import is_valid_search_query, parse_keywords, parse_year, sanitise_text, validate_pdf_document
 
@@ -32,8 +32,7 @@ class UploadStates(StatesGroup):
     waiting_file_name = State()
     waiting_subject = State()
     waiting_category = State()
-    waiting_university = State()
-    waiting_semester = State()
+    waiting_class = State()
     waiting_year = State()
     waiting_keywords = State()
 
@@ -137,7 +136,6 @@ async def text_search(message: Message, db_user: User | None = None):
 
 async def _perform_search(message: Message, query: str, db_user: User | None, page: int) -> None:
     async with get_session() as session:
-        # ── Check if Search is Disabled ──────────
         setting = await session.execute(select(BotSetting).where(BotSetting.key == "search_enabled"))
         setting = setting.scalar_one_or_none()
         if setting and setting.value == "false":
@@ -220,45 +218,27 @@ async def upload_subject(message: Message, state: FSMContext):
 async def upload_category_text(message: Message, state: FSMContext):
     if message.text and not message.text.startswith("/"):
         await state.update_data(category=sanitise_text(message.text, 100))
-        await state.set_state(UploadStates.waiting_university)
-        await message.answer("Enter the <b>university</b> name (or /skip):")
+        await state.set_state(UploadStates.waiting_class)
+        await message.answer("Enter the <b>Class</b> (e.g., Class 10, B.Sc 1st Year) or /skip:")
 
 
 @router.callback_query(F.data.startswith("upload_cat:"), UploadStates.waiting_category)
 async def upload_category_callback(callback, state: FSMContext):
     category = callback.data.split(":", 1)[1]
     await state.update_data(category=category)
-    await state.set_state(UploadStates.waiting_university)
+    await state.set_state(UploadStates.waiting_class)
     await callback.message.edit_text(f"✅ Category: {category}")
-    await callback.message.answer("Enter the <b>university</b> name (or /skip):")
+    await callback.message.answer("Enter the <b>Class</b> (e.g., Class 10, B.Sc 1st Year) or /skip:")
     await callback.answer()
 
 
-@router.message(UploadStates.waiting_university, F.text)
-async def upload_university(message: Message, state: FSMContext):
-    university = None
-    if message.text and message.text.strip().lower() != "/skip": university = sanitise_text(message.text, 255)
-    await state.update_data(university=university)
-    await state.set_state(UploadStates.waiting_semester)
-    await message.answer("Select the <b>semester</b>:", reply_markup=semester_keyboard())
-
-
-@router.message(UploadStates.waiting_semester, F.text)
-async def upload_semester_text(message: Message, state: FSMContext):
-    if message.text and not message.text.startswith("/"):
-        await state.update_data(semester=sanitise_text(message.text, 50))
-        await state.set_state(UploadStates.waiting_year)
-        await message.answer("Enter the <b>year</b> (e.g. 2023) or /skip:")
-
-
-@router.callback_query(F.data.startswith("upload_sem:"), UploadStates.waiting_semester)
-async def upload_semester_callback(callback, state: FSMContext):
-    semester = callback.data.split(":", 1)[1]
-    await state.update_data(semester=semester)
+@router.message(UploadStates.waiting_class, F.text)
+async def upload_class_name(message: Message, state: FSMContext):
+    class_name = None
+    if message.text and message.text.strip().lower() != "/skip": class_name = sanitise_text(message.text, 100)
+    await state.update_data(class_name=class_name)
     await state.set_state(UploadStates.waiting_year)
-    await callback.message.edit_text(f"✅ Semester: {semester}")
-    await callback.message.answer("Enter the <b>year</b> (e.g. 2023) or /skip:")
-    await callback.answer()
+    await message.answer("Enter the <b>year</b> (e.g. 2023) or /skip:")
 
 
 @router.message(UploadStates.waiting_year, F.text)
@@ -295,8 +275,8 @@ async def upload_keywords(message: Message, state: FSMContext, bot: Bot, db_user
         doc = await doc_service.create_document(
             session, file_id=new_file_id, message_id=channel_msg_id,
             file_name=data.get("file_name", data.get("original_file_name", "document.pdf")),
-            subject=data.get("subject"), category=data.get("category"), university=data.get("university"),
-            semester=data.get("semester"), year=data.get("year"), keywords=keywords, description=None,
+            subject=data.get("subject"), category=data.get("category"), class_name=data.get("class_name"),
+            year=data.get("year"), keywords=keywords, description=None,
             uploaded_by=db_user.telegram_id if db_user else None, approved=approved
         )
         if db_user: await user_service.increment_upload_count(session, db_user.telegram_id)
