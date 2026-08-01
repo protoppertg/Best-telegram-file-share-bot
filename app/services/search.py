@@ -65,7 +65,6 @@ async def search_documents(
     offset = (page - 1) * per_page
     
     # Fuzzy matching: replace spaces with '%' so "physics thermodynamics" becomes "%physics%thermodynamics%"
-    # This allows it to match "physics_notes_thermodynamics.pdf"
     normalized = query.strip()
     fuzzy_q = '%' + '%'.join(normalized.split()) + '%'
     fuzzy_q_start = normalized.split()[0] + '%' if normalized.split() else '%%'
