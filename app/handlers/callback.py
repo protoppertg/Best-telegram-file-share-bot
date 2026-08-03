@@ -29,7 +29,8 @@ async def _get_settings(session) -> dict:
     settings_rows = result.scalars().all()
     data = {
         "auto_delete_enabled": False, "auto_delete_seconds": 3600,
-        "protect_forwarding": False, "post_file_message": "", "shortlink_enabled": False
+        "protect_forwarding": False, "post_file_message": "", "shortlink_enabled": False,
+        "premium_enabled": True
     }
     for row in settings_rows:
         if row.key == "auto_delete_enabled" and row.value == "true": data["auto_delete_enabled"] = True
@@ -37,6 +38,7 @@ async def _get_settings(session) -> dict:
         elif row.key == "protect_forwarding" and row.value == "true": data["protect_forwarding"] = True
         elif row.key == "post_file_message": data["post_file_message"] = row.value or ""
         elif row.key == "shortlink_enabled" and row.value == "true": data["shortlink_enabled"] = True
+        elif row.key == "premium_enabled" and row.value == "false": data["premium_enabled"] = False
     return data
 
 async def _schedule_auto_delete(bot: Bot, chat_id: int, message_id: int, delay: int):
@@ -77,6 +79,10 @@ async def check_sub_callback(callback: CallbackQuery, bot: Bot):
             text_setting = await session.execute(select(BotSetting).where(BotSetting.key == "start_text"))
             text_setting = text_setting.scalar_one_or_none()
             
+            prem_enabled_setting = await session.execute(select(BotSetting).where(BotSetting.key == "premium_enabled"))
+            prem_enabled_setting = prem_enabled_setting.scalar_one_or_none()
+            show_prem = not (prem_enabled_setting and prem_enabled_setting.value == "false")
+            
             default_text = (
                 "✨ <b>Welcome to PrepCore!</b> ✨\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
@@ -94,7 +100,7 @@ async def check_sub_callback(callback: CallbackQuery, bot: Bot):
             text = text_setting.value if text_setting and text_setting.value else default_text
             try: await callback.message.delete()
             except: pass
-            await bot.send_message(callback.from_user.id, text, reply_markup=main_menu_kb())
+            await bot.send_message(callback.from_user.id, text, reply_markup=main_menu_kb(show_premium=show_prem))
 
 @router.callback_query(F.data == "search_again")
 async def search_again(callback: CallbackQuery):
@@ -154,7 +160,11 @@ async def get_file_callback(callback: CallbackQuery, bot: Bot, db_user: User | N
         await callback.answer("This file is pending approval.", show_alert=True)
         return
 
-    if bot_settings["shortlink_enabled"] and (not db_user or not db_user.is_premium):
+    # Check shortlink. If premium is disabled, treat everyone as non-premium (show shortlinks)
+    is_prem_enabled = bot_settings["premium_enabled"]
+    user_is_premium = is_prem_enabled and db_user and db_user.is_premium
+
+    if bot_settings["shortlink_enabled"] and not user_is_premium:
         original_url = "https://google.com" 
         short_url = await get_shortlink(original_url)
         
@@ -166,7 +176,7 @@ async def get_file_callback(callback: CallbackQuery, bot: Bot, db_user: User | N
         await callback.message.edit_text(
             f"⚠️ <b>Free User Download</b>\n\n"
             f"To download this file, please support us by visiting the sponsor link below.\n"
-            f"<i>Premium users download directly without ads. Use /premium to upgrade.</i>",
+            f"<i>Premium users download directly without ads.</i>",
             reply_markup=kb.as_markup()
         )
         await callback.answer()
