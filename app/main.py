@@ -13,6 +13,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from app.bot import bot, dp, on_shutdown, on_startup, setup_dispatcher
 from app.config import settings
 from app.database import engine, init_db
+import app.models  
 from app.services.cache import close_cache, get_cache
 from app.utils.logger import logger, setup_logging
 from app.web_admin import router as web_admin_router
@@ -20,10 +21,7 @@ from app.web_admin import router as web_admin_router
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     setup_logging()
-    
-    # Initialize Database (No Alembic needed!)
-    await init_db()
-    
+    await init_db()  # This will now create all tables perfectly
     setup_dispatcher(dp)
     await get_cache()
 
