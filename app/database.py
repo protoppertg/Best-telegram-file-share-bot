@@ -6,9 +6,7 @@ from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import (
-    AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine,
-)
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
 from app.config import settings
@@ -37,10 +35,8 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
 async def init_db():
     """Creates tables and safely adds missing columns without Alembic."""
     async with engine.begin() as conn:
-        # 1. Create all tables natively
         await conn.run_sync(Base.metadata.create_all)
         
-        # 2. Safely add columns that were introduced in later updates
         alters = [
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_banned BOOLEAN DEFAULT false",
             "ALTER TABLE documents ADD COLUMN IF NOT EXISTS class_name VARCHAR(100)",
@@ -51,4 +47,4 @@ async def init_db():
             try:
                 await conn.execute(text(sql))
             except Exception:
-                pass # Ignore if it already exists
+                pass
