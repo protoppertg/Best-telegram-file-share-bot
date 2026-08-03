@@ -38,6 +38,13 @@ class UploadStates(StatesGroup):
     waiting_keywords = State()
 
 
+async def _is_premium_enabled() -> bool:
+    async with get_session() as session:
+        prem_enabled = await session.execute(select(BotSetting).where(BotSetting.key == "premium_enabled"))
+        prem_enabled = prem_enabled.scalar_one_or_none()
+        return not (prem_enabled and prem_enabled.value == "false")
+
+
 @router.message(Command("start"))
 async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
@@ -60,7 +67,9 @@ async def cmd_start(message: Message, state: FSMContext):
         "<i>Ready to dive in? Just type a keyword below!</i>"
     )
     text = text_setting.value if text_setting and text_setting.value else default_text
-    await message.answer(text, reply_markup=main_menu_kb())
+    
+    show_prem = await _is_premium_enabled()
+    await message.answer(text, reply_markup=main_menu_kb(show_premium=show_prem))
 
 
 @router.message(F.text == "❓ Help")
@@ -114,6 +123,12 @@ async def cmd_usage(message: Message, db_user: User | None = None):
 @router.message(F.text == "🎟️ Premium")
 @router.message(Command("premium"))
 async def cmd_premium(message: Message, db_user: User | None = None):
+    is_premium_enabled = await _is_premium_enabled()
+    
+    if not is_premium_enabled:
+        await message.answer("🚫 <b>Premium is currently disabled by the admin.</b>")
+        return
+
     async with get_session() as session:
         text_setting = await session.execute(select(BotSetting).where(BotSetting.key == "premium_text"))
         text_setting = text_setting.scalar_one_or_none()
@@ -127,13 +142,12 @@ async def cmd_premium(message: Message, db_user: User | None = None):
         f"🎟️ <b>Premium Status</b>\n\n"
         f"Status: {status}\n\n"
         f"<b>Premium Benefits:</b>\n"
-        f"• {settings.PREMIUM_SEARCH_LIMIT} searches per day (vs {settings.FREE_SEARCH_LIMIT} free)\n"
-        f"• {settings.PREMIUM_UPLOAD_LIMIT} uploads per day (vs {settings.FREE_UPLOAD_LIMIT} free)\n"
+        f"• Unlimited searches per day\n"
         f"• No ads/short links when downloading files\n\n"
         f"<b>How to get Premium:</b>\n"
-        f"Send a Rs. 100 gift card (Google Play gift card, Flipkart gift card, Amazon gift card)to the @contacttoppers_bot . Once verified, the admin will grant you premium status manually for 30 days." 
-        f"Fake responses will lead to permanent ban from network"
+        f"Send a Rs. 100 gift card to the admin. Once verified, the admin will grant you premium status manually."
     )
+        
     text = text_setting.value if text_setting and text_setting.value else default_text
     await message.answer(text)
 
@@ -366,4 +380,5 @@ async def cancel_idle(message: Message):
 @router.message(Command("cancel"))
 async def cancel_fsm(message: Message, state: FSMContext):
     await state.clear()
-    await message.answer("❌ Operation cancelled. What would you like to do next?", reply_markup=main_menu_kb())
+    show_prem = await _is_premium_enabled()
+    await message.answer("❌ Operation cancelled. What would you like to do next?", reply_markup=main_menu_kb(show_premium=show_prem))
