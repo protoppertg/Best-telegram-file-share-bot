@@ -2,25 +2,24 @@
 {% block content %}
 <div class="mb-8">
     <h1 class="text-3xl font-bold text-gray-900">Settings</h1>
-    <p class="text-gray-500 mt-1">Manage your bot's behavior and text.</p>
+    <p class="text-gray-500 mt-1">Manage your bot's behavior, limits, and text.</p>
 </div>
 
 <div class="space-y-6">
-    <!-- Bot Texts -->
     <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
         <h2 class="text-xl font-bold mb-4 text-gray-900">Bot Texts</h2>
         <form method="POST" action="/admin/settings" class="space-y-6">
             <div>
                 <label class="block text-gray-700 text-sm font-bold mb-2">Start Message (/start)</label>
-                <textarea name="start_text" rows="6" class="w-full border border-gray-200 p-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition" placeholder="Leave blank to use default message. HTML is supported.">{{ start_text }}</textarea>
+                <textarea name="start_text" rows="6" class="w-full border border-gray-200 p-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition" placeholder="Leave blank to use default message.">{{ start_text }}</textarea>
             </div>
             <div>
                 <label class="block text-gray-700 text-sm font-bold mb-2">About Message (/about)</label>
-                <textarea name="about_text" rows="4" class="w-full border border-gray-200 p-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition" placeholder="Leave blank to use default message. HTML is supported.">{{ about_text }}</textarea>
+                <textarea name="about_text" rows="4" class="w-full border border-gray-200 p-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition" placeholder="Leave blank to use default message.">{{ about_text }}</textarea>
             </div>
             <div>
                 <label class="block text-gray-700 text-sm font-bold mb-2">Premium Message (/premium)</label>
-                <textarea name="premium_text" rows="6" class="w-full border border-gray-200 p-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition" placeholder="Leave blank to use default message. HTML is supported.">{{ premium_text }}</textarea>
+                <textarea name="premium_text" rows="6" class="w-full border border-gray-200 p-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition" placeholder="Leave blank to use default message.">{{ premium_text }}</textarea>
             </div>
 
             <hr class="border-gray-100">
@@ -36,17 +35,20 @@
                         </label>
                     </div>
                     <div class="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
-                        <span class="text-sm font-medium text-gray-900">Auto-Delete Files</span>
+                        <span class="text-sm font-medium text-gray-900">Enable Premium System</span>
                         <label class="relative inline-flex items-center cursor-pointer">
-                            <input type="checkbox" name="auto_delete_enabled" class="sr-only peer" {% if ad_enabled %}checked{% endif %}>
+                            <input type="checkbox" name="premium_enabled" class="sr-only peer" {% if premium_enabled %}checked{% endif %}>
                             <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:bg-blue-500 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all"></div>
                         </label>
                     </div>
                 </div>
                 <div class="flex flex-col space-y-3">
-                    <div class="p-3 bg-gray-50 rounded-xl">
-                        <label class="block text-gray-700 text-sm font-bold mb-1">Delete after (sec)</label>
-                        <input type="number" name="auto_delete_seconds" value="{{ ad_seconds }}" class="w-full bg-transparent border-none focus:outline-none text-sm">
+                    <div class="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
+                        <span class="text-sm font-medium text-gray-900">Auto-Delete Files</span>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" name="auto_delete_enabled" class="sr-only peer" {% if ad_enabled %}checked{% endif %}>
+                            <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:bg-blue-500 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all"></div>
+                        </label>
                     </div>
                     <div class="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
                         <span class="text-sm font-medium text-gray-900">Prevent Forwarding</span>
@@ -58,16 +60,52 @@
                 </div>
             </div>
 
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div class="p-3 bg-gray-50 rounded-xl">
+                    <label class="block text-gray-700 text-sm font-bold mb-1">Free Search Limit (/day)</label>
+                    <input type="number" name="free_search_limit" value="{{ free_search_limit }}" class="w-full bg-transparent border-none focus:outline-none text-sm">
+                </div>
+                <div class="p-3 bg-gray-50 rounded-xl">
+                    <label class="block text-gray-700 text-sm font-bold mb-1">Premium Search Limit (/day)</label>
+                    <input type="number" name="prem_search_limit" value="{{ prem_search_limit }}" class="w-full bg-transparent border-none focus:outline-none text-sm">
+                </div>
+            </div>
+
+            <div class="p-3 bg-gray-50 rounded-xl">
+                <label class="block text-gray-700 text-sm font-bold mb-1">Auto-Delete Delay (sec)</label>
+                <input type="number" name="auto_delete_seconds" value="{{ ad_seconds }}" class="w-full bg-transparent border-none focus:outline-none text-sm">
+            </div>
+
             <div>
                 <label class="block text-gray-700 text-sm font-bold mb-2">Post-File Message</label>
                 <textarea name="post_file_message" rows="3" class="w-full border border-gray-200 p-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition" placeholder="Leave blank to disable.">{{ post_file_message }}</textarea>
             </div>
 
-            <button type="submit" class="bg-blue-500 text-white px-6 py-2.5 rounded-xl hover:bg-blue-600 transition shadow-sm">Save Settings</button>
+            <hr class="border-gray-100">
+
+            <h2 class="text-xl font-bold pt-4 text-gray-900">Link Shortener (Monetization)</h2>
+            <div class="flex items-center justify-between p-3 bg-gray-50 rounded-xl mb-4">
+                <span class="text-sm font-medium text-gray-900">Enable Shortlinks for Free Users</span>
+                <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" name="shortlink_enabled" class="sr-only peer" {% if shortlink_enabled %}checked{% endif %}>
+                    <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:bg-blue-500 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all"></div>
+                </label>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                    <label class="block text-gray-700 text-sm font-bold mb-2">API URL</label>
+                    <input type="text" name="shortlink_api_url" value="{{ shortlink_api_url }}" class="w-full border border-gray-200 p-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition" placeholder="https://api.shortlinkservice.com/api">
+                </div>
+                <div>
+                    <label class="block text-gray-700 text-sm font-bold mb-2">API Key</label>
+                    <input type="text" name="shortlink_api_key" value="{{ shortlink_api_key }}" class="w-full border border-gray-200 p-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition" placeholder="Your API Key">
+                </div>
+            </div>
+
+            <button type="submit" class="bg-blue-500 text-white px-6 py-2.5 rounded-xl hover:bg-blue-600 transition shadow-sm mt-4">Save Settings</button>
         </form>
     </div>
 
-    <!-- Force Sub -->
     <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
         <h2 class="text-xl font-bold mb-4 text-gray-900">Force Sub Channels</h2>
         {% if channels %}
