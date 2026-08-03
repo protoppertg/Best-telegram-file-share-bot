@@ -22,16 +22,13 @@ from app.utils.validators import sanitise_text, parse_keywords, parse_year
 
 router = Router()
 
-
 class AdminFilter(BaseFilter):
     async def __call__(self, message: Message) -> bool:
-        if message.chat.type == "channel":
-            return True
+        if message.chat.type == "channel": return True
         return message.from_user and message.from_user.id in settings.admin_ids_list
 
 router.message.filter(AdminFilter())
 router.callback_query.filter(F.data.startswith("adm:"))
-
 
 class ForceSubStates(StatesGroup):
     waiting_channel_id = State()
@@ -42,9 +39,6 @@ class BroadcastStates(StatesGroup):
 
 class DirectMessageStates(StatesGroup):
     waiting_message = State()
-
-
-# ── Helpers for Force Sub JSON ──────────────────
 
 async def get_force_sub_channels(session) -> list[dict]:
     res = await session.execute(select(BotSetting).where(BotSetting.key == "force_sub_channels"))
@@ -58,13 +52,8 @@ async def save_force_sub_channels(session, channels_list: list[dict]):
     res = await session.execute(select(BotSetting).where(BotSetting.key == "force_sub_channels"))
     s = res.scalar_one_or_none()
     val = json.dumps(channels_list)
-    if not s:
-        session.add(BotSetting(key="force_sub_channels", value=val))
-    else:
-        s.value = val
-
-
-# ── Keyboards ───────────────────────────────────
+    if not s: session.add(BotSetting(key="force_sub_channels", value=val))
+    else: s.value = val
 
 def admin_menu_kb():
     from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -139,9 +128,6 @@ def admin_doc_actions_kb(doc_id: int, approved: bool):
     kb.adjust(1)
     return kb.as_markup()
 
-
-# ── Main Menu & Stats ────────────────────────────
-
 @router.message(Command("admin"))
 async def cmd_admin(message: Message, state: FSMContext):
     await state.clear()
@@ -169,8 +155,6 @@ async def cb_admin_stats(callback: CallbackQuery):
     await callback.message.edit_text(text, reply_markup=admin_stats_kb())
     await callback.answer()
 
-# ── Broadcast Feature ─────────────────────────────
-
 @router.callback_query(F.data == "adm:bcast")
 async def cb_admin_bcast(callback: CallbackQuery, state: FSMContext):
     await state.set_state(BroadcastStates.waiting_message)
@@ -190,20 +174,16 @@ async def cancel_bcast(message: Message, state: FSMContext):
 @router.message(BroadcastStates.waiting_message)
 async def perform_bcast(message: Message, state: FSMContext, bot: Bot):
     await state.clear()
-    
     async with get_session() as session:
         result = await session.execute(select(User.telegram_id))
         user_ids = result.scalars().all()
-
     total_users = len(user_ids)
     await message.answer(f"⏳ <b>Broadcasting to {total_users} users...</b>\nThis may take a few minutes. I will notify you when it's done.")
-    
     asyncio.create_task(_background_bcast(bot, message.chat.id, message.message_id, user_ids))
 
 async def _background_bcast(bot: Bot, admin_chat_id: int, message_id: int, user_ids: list[int]):
     sent_count = 0
     failed_count = 0
-
     for uid in user_ids:
         try:
             await bot.copy_message(chat_id=uid, from_chat_id=admin_chat_id, message_id=message_id)
@@ -220,8 +200,6 @@ async def _background_bcast(bot: Bot, admin_chat_id: int, message_id: int, user_
         f"❌ Failed (blocked bot): {failed_count}",
         reply_markup=admin_menu_kb()
     )
-
-# ── Force Sub Settings (Multiple Channels) ────────
 
 @router.callback_query(F.data == "adm:fs")
 async def cb_admin_fs(callback: CallbackQuery, state: FSMContext):
@@ -259,12 +237,10 @@ async def fs_invite_link(message: Message, state: FSMContext):
         return
     data = await state.get_data()
     channel_id = data["channel_id"]
-    
     async with get_session() as session:
         channels = await get_force_sub_channels(session)
         channels.append({"id": channel_id, "link": link})
         await save_force_sub_channels(session, channels)
-
     await state.clear()
     await message.answer("✅ Force Sub channel added!", reply_markup=admin_menu_kb())
 
@@ -274,8 +250,6 @@ async def fs_clear(message: Message, state: FSMContext):
     async with get_session() as session:
         await save_force_sub_channels(session, [])
     await message.answer("🗑 All Force Sub channels cleared.", reply_markup=admin_menu_kb())
-
-# ── Auto-Index Channel Posts ─────────────────────
 
 @router.channel_post(F.document)
 async def auto_index_channel_post(message: Message, bot: Bot):
@@ -296,47 +270,33 @@ async def auto_index_channel_post(message: Message, bot: Bot):
 
     async with get_session() as session:
         result = await session.execute(select(Document).where(Document.file_id == file_id))
-        if result.scalar_one_or_none():
-            return
+        if result.scalar_one_or_none(): return
 
         doc = await doc_service.create_document(
             session, file_id=file_id, message_id=message_id, file_name=file_name,
             subject="Uncategorized", category="Uncategorized", approved=True
         )
 
-    #for admin_id in settings.admin_ids_list:
-        #try:
-            #await bot.send_message(
-                #admin_id,
-                #f"📥 <b>Auto-Indexed File</b>\n\n"
-                #f"📁 Name: <code>{escape(file_name)}</code>\n"
-                #f"🆔 ID: {doc.id}\n\n"
-                #f"Use the command below to update its metadata so users can find it:\n"
-                #f"<code>/edit_doc {doc.id} subject=Physics category=PYQ year=2023</code>"
-            #)
-        #except Exception:
-            #pass
+    for admin_id in settings.admin_ids_list:
+        try:
+            await bot.send_message(
+                admin_id,
+                f"📥 <b>Auto-Indexed File</b>\n\n"
+                f"📁 Name: <code>{escape(file_name)}</code>\n"
+                f"🆔 ID: {doc.id}\n\n"
+                f"Use the command below to update its metadata so users can find it:\n"
+                f"<code>/edit_doc {doc.id} subject=Physics category=PYQ year=2023</code>"
+            )
+        except Exception:
+            pass
 
-
-# ── Edit Document Metadata ───────────────────────
-
-@router.message(Command("dedupe"))
-async def cmd_dedupe(message: Message):
-    """Finds and deletes duplicate files based on file_name."""
-    async with get_session() as session:
-        deleted_count = await doc_service.delete_duplicates(session)
-    
-    if deleted_count > 0:
-        await message.answer(f"🧹 <b>Cleanup Complete!</b>\n\nDeleted {deleted_count} duplicate files. The oldest copy of each file was kept.")
-    else:
-        await message.answer("✅ No duplicate files found. Your database is clean!")
 @router.message(Command("edit_doc"))
 async def cmd_edit_doc(message: Message, command: CommandObject):
     if not command.args:
         await message.answer(
             "Usage: <code>/edit_doc [id] [field]=[value]</code>\n\n"
             "Fields: file_name, subject, category, class_name, year, keywords\n\n"
-            "Example: <code>/edit_doc 42 subject=Physics class_name=Class 10 year=2023</code>"
+            "Example: <code>/edit_doc 42 subject=Physics category=PYQ year=2023</code>"
         )
         return
 
@@ -375,8 +335,14 @@ async def cmd_edit_doc(message: Message, command: CommandObject):
     else:
         await message.answer(f"Document {doc_id} not found.")
 
-
-# ── User Management & Direct Message ───────────────
+@router.message(Command("dedupe"))
+async def cmd_dedupe(message: Message):
+    async with get_session() as session:
+        deleted_count = await doc_service.delete_duplicates(session)
+    if deleted_count > 0:
+        await message.answer(f"🧹 <b>Cleanup Complete!</b>\n\nDeleted {deleted_count} duplicate files. The oldest copy of each file was kept.")
+    else:
+        await message.answer("✅ No duplicate files found. Your database is clean!")
 
 @router.callback_query(F.data.startswith("adm:users:"))
 async def cb_admin_users(callback: CallbackQuery):
@@ -404,9 +370,7 @@ async def cb_admin_user_actions(callback: CallbackQuery, state: FSMContext):
             return
         prem_status = "⭐ ACTIVE" if user.is_premium else "❌ INACTIVE"
         if user.premium_expiry: prem_status += f" (until {user.premium_expiry.strftime('%Y-%m-%d')})"
-        
         ban_status = "🚫 BANNED" if user.is_banned else "✅ ACTIVE"
-        
         text = (
             f"👤 <b>User Profile</b>\n\n"
             f"🆔 ID: <code>{user.telegram_id}</code>\n"
@@ -457,18 +421,14 @@ async def perform_dm(message: Message, state: FSMContext, bot: Bot):
     data = await state.get_data()
     target_id = data.get("target_id")
     await state.clear()
-
     if not target_id:
         await message.answer("❌ Error: Target user not found. Please try again.")
         return
-
     try:
         await bot.copy_message(chat_id=target_id, from_chat_id=message.chat.id, message_id=message.message_id)
         await message.answer(f"✅ Message sent successfully to user <code>{target_id}</code>.")
     except Exception as e:
         await message.answer(f"❌ Failed to send message to user <code>{target_id}</code>. They may have blocked the bot.\nError: {escape(str(e))}")
-
-# ── Document Management ───────────────────────────
 
 @router.callback_query(F.data.startswith("adm:docs:"))
 async def cb_admin_docs(callback: CallbackQuery):
