@@ -9,12 +9,18 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from app.config import settings
 
-def main_menu_kb() -> ReplyKeyboardMarkup:
+def main_menu_kb(show_premium: bool = True) -> ReplyKeyboardMarkup:
     """The persistent bottom keyboard for users."""
-    kb = [
-        [KeyboardButton(text="🔍 Search"), KeyboardButton(text="📤 Upload")],
-        [KeyboardButton(text="🎟️ Premium"), KeyboardButton(text="❓ Help")]
-    ]
+    if show_premium:
+        kb = [
+            [KeyboardButton(text="🔍 Search"), KeyboardButton(text="📤 Upload")],
+            [KeyboardButton(text="🎟️ Premium"), KeyboardButton(text="❓ Help")]
+        ]
+    else:
+        kb = [
+            [KeyboardButton(text="🔍 Search"), KeyboardButton(text="📤 Upload")],
+            [KeyboardButton(text="❓ Help")]
+        ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
 def search_results_keyboard(results: List, query_key: str, page: int, total_pages: int) -> InlineKeyboardMarkup:
