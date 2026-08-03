@@ -17,7 +17,6 @@ from app.models import BotSetting, User
 from app.services import document as doc_service
 from app.services.cache import get_cache
 from app.services.search import search_documents
-from app.services.telegram import send_document_to_user
 from app.services.shortlink import get_shortlink
 from app.utils.keyboards import after_file_keyboard, search_results_keyboard, main_menu_kb
 from app.utils.logger import logger
@@ -25,48 +24,34 @@ from app.utils.validators import sanitise_text
 
 router = Router()
 
-
 async def _get_settings(session) -> dict:
     result = await session.execute(select(BotSetting))
     settings_rows = result.scalars().all()
-    
     data = {
-        "auto_delete_enabled": False,
-        "auto_delete_seconds": 3600,
-        "protect_forwarding": False,
-        "post_file_message": ""
+        "auto_delete_enabled": False, "auto_delete_seconds": 3600,
+        "protect_forwarding": False, "post_file_message": "", "shortlink_enabled": False
     }
-    
     for row in settings_rows:
-        if row.key == "auto_delete_enabled" and row.value == "true":
-            data["auto_delete_enabled"] = True
-        elif row.key == "auto_delete_seconds" and row.value.isdigit():
-            data["auto_delete_seconds"] = int(row.value)
-        elif row.key == "protect_forwarding" and row.value == "true":
-            data["protect_forwarding"] = True
-        elif row.key == "post_file_message":
-            data["post_file_message"] = row.value or ""
-            
+        if row.key == "auto_delete_enabled" and row.value == "true": data["auto_delete_enabled"] = True
+        elif row.key == "auto_delete_seconds" and row.value.isdigit(): data["auto_delete_seconds"] = int(row.value)
+        elif row.key == "protect_forwarding" and row.value == "true": data["protect_forwarding"] = True
+        elif row.key == "post_file_message": data["post_file_message"] = row.value or ""
+        elif row.key == "shortlink_enabled" and row.value == "true": data["shortlink_enabled"] = True
     return data
-
 
 async def _schedule_auto_delete(bot: Bot, chat_id: int, message_id: int, delay: int):
     try:
         await asyncio.sleep(delay)
         await bot.delete_message(chat_id=chat_id, message_id=message_id)
-        logger.info("auto_delete_success", chat_id=chat_id, message_id=message_id)
     except Exception as e:
         logger.warning("auto_delete_failed", chat_id=chat_id, error=str(e))
-
 
 @router.callback_query(F.data == "noop")
 async def noop_callback(callback: CallbackQuery):
     await callback.answer()
 
-
 @router.callback_query(F.data == "check_sub")
 async def check_sub_callback(callback: CallbackQuery, bot: Bot):
-    """Verifies if the user joined the channels. If yes, sends the start message."""
     async with get_session() as session:
         res = await session.execute(select(BotSetting).where(BotSetting.key == "force_sub_channels"))
         s = res.scalar_one_or_none()
@@ -88,10 +73,7 @@ async def check_sub_callback(callback: CallbackQuery, bot: Bot):
         if missing_channels:
             await callback.answer("You haven't joined all channels yet!", show_alert=True)
         else:
-            # Successfully joined! Send welcome message.
             await callback.answer("Verification successful! Welcome aboard. 🎉", show_alert=False)
-            
-            # Fetch custom start text if it exists
             text_setting = await session.execute(select(BotSetting).where(BotSetting.key == "start_text"))
             text_setting = text_setting.scalar_one_or_none()
             
@@ -110,22 +92,14 @@ async def check_sub_callback(callback: CallbackQuery, bot: Bot):
                 "<i>Ready to dive in? Just type a keyword below!</i>"
             )
             text = text_setting.value if text_setting and text_setting.value else default_text
-            
-            # Delete the old "You must join" message
-            try:
-                await callback.message.delete()
-            except Exception:
-                pass
-                
-            # Send the welcome message with the main menu
+            try: await callback.message.delete()
+            except: pass
             await bot.send_message(callback.from_user.id, text, reply_markup=main_menu_kb())
-
 
 @router.callback_query(F.data == "search_again")
 async def search_again(callback: CallbackQuery):
     await callback.message.edit_text("🔍 <b>New Search</b>\n\nType your search query or use <code>/search \"query\"</code>")
     await callback.answer()
-
 
 async def _send_file_to_user(bot: Bot, callback: CallbackQuery, doc, bot_settings: dict, query_key: str, page: int):
     is_ad_enabled = bot_settings["auto_delete_enabled"]
@@ -133,20 +107,13 @@ async def _send_file_to_user(bot: Bot, callback: CallbackQuery, doc, bot_setting
     protect = bot_settings["protect_forwarding"]
     post_file_msg = bot_settings["post_file_message"]
     
-    # Removed file name from caption
     caption_parts = []
-    if doc.subject:
-        caption_parts.append(f"📚 {escape(doc.subject)}")
-    if doc.category:
-        caption_parts.append(f"🏷️ {escape(doc.category)}")
-    
+    if doc.subject: caption_parts.append(f"📚 {escape(doc.subject)}")
+    if doc.category: caption_parts.append(f"🏷️ {escape(doc.category)}")
     caption = " | ".join(caption_parts) if caption_parts else None
     
     sent_file_msg = await bot.send_document(
-        chat_id=callback.from_user.id, 
-        document=doc.file_id, 
-        protect_content=protect, 
-        caption=caption
+        chat_id=callback.from_user.id, document=doc.file_id, protect_content=protect, caption=caption
     )
 
     msg_ids_to_delete = [sent_file_msg.message_id]
@@ -162,11 +129,9 @@ async def _send_file_to_user(bot: Bot, callback: CallbackQuery, doc, bot_setting
         for msg_id in msg_ids_to_delete:
             asyncio.create_task(_schedule_auto_delete(bot, callback.from_user.id, msg_id, ad_seconds))
 
-    # Update the search results message to show it was sent
     try:
         await callback.message.edit_text(f"✅ File sent successfully.", reply_markup=after_file_keyboard(query_key, page))
     except TelegramBadRequest: pass
-
 
 @router.callback_query(F.data.startswith("getfile:"))
 async def get_file_callback(callback: CallbackQuery, bot: Bot, db_user: User | None = None):
@@ -189,7 +154,7 @@ async def get_file_callback(callback: CallbackQuery, bot: Bot, db_user: User | N
         await callback.answer("This file is pending approval.", show_alert=True)
         return
 
-    if settings.SHORTLINK_ENABLED and (not db_user or not db_user.is_premium):
+    if bot_settings["shortlink_enabled"] and (not db_user or not db_user.is_premium):
         original_url = "https://google.com" 
         short_url = await get_shortlink(original_url)
         
@@ -210,7 +175,6 @@ async def get_file_callback(callback: CallbackQuery, bot: Bot, db_user: User | N
     await callback.answer("📥 Sending file...")
     await _send_file_to_user(bot, callback, doc, bot_settings, query_key, page)
 
-
 @router.callback_query(F.data.startswith("dlfile:"))
 async def dl_file_callback(callback: CallbackQuery, bot: Bot):
     parts = callback.data.split(":")
@@ -228,7 +192,6 @@ async def dl_file_callback(callback: CallbackQuery, bot: Bot):
 
     await callback.answer("📥 Sending file...")
     await _send_file_to_user(bot, callback, doc, bot_settings, query_key, page)
-
 
 @router.callback_query(F.data.startswith("search:"))
 async def search_pagination(callback: CallbackQuery):
@@ -253,10 +216,7 @@ async def search_pagination(callback: CallbackQuery):
     year = cache_data.get("year")
 
     async with get_session() as session:
-        results, total = await search_documents(
-            session, query, page=page, 
-            subject=subject, class_name=class_name, year=year
-        )
+        results, total = await search_documents(session, query, page=page, subject=subject, class_name=class_name, year=year)
 
     if not results:
         await callback.answer("No more results.", show_alert=True)
