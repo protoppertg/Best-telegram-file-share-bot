@@ -84,6 +84,12 @@ async def admin_settings(request: Request):
         start_text = await get_setting(session, "start_text", "")
         about_text = await get_setting(session, "about_text", "")
         premium_text = await get_setting(session, "premium_text", "")
+        premium_enabled = await get_setting(session, "premium_enabled", "true")
+        free_search_limit = await get_setting(session, "free_search_limit", str(settings.FREE_SEARCH_LIMIT))
+        prem_search_limit = await get_setting(session, "premium_search_limit", str(settings.PREMIUM_SEARCH_LIMIT))
+        shortlink_enabled = await get_setting(session, "shortlink_enabled", "false")
+        shortlink_api_url = await get_setting(session, "shortlink_api_url", "")
+        shortlink_api_key = await get_setting(session, "shortlink_api_key", "")
         channels = await get_force_sub_channels(session)
         
     return templates.TemplateResponse(request, "settings.html", {
@@ -95,6 +101,12 @@ async def admin_settings(request: Request):
         "start_text": start_text,
         "about_text": about_text,
         "premium_text": premium_text,
+        "premium_enabled": premium_enabled == "true",
+        "free_search_limit": free_search_limit,
+        "prem_search_limit": prem_search_limit,
+        "shortlink_enabled": shortlink_enabled == "true",
+        "shortlink_api_url": shortlink_api_url,
+        "shortlink_api_key": shortlink_api_key,
         "channels": channels,
         "active": "settings"
     })
@@ -109,53 +121,36 @@ async def admin_settings_post(
     post_file_message: str = Form(""),
     start_text: str = Form(""),
     about_text: str = Form(""),
-    premium_text: str = Form("")
+    premium_text: str = Form(""),
+    premium_enabled: str = Form("off"),
+    free_search_limit: str = Form("5"),
+    prem_search_limit: str = Form("100"),
+    shortlink_enabled: str = Form("off"),
+    shortlink_api_url: str = Form(""),
+    shortlink_api_key: str = Form("")
 ):
     try:
         async with get_session() as session:
-            s_val = "true" if search_enabled == "on" else "false"
-            s_setting = await session.execute(select(BotSetting).where(BotSetting.key == "search_enabled"))
-            s_setting = s_setting.scalar_one_or_none()
-            if not s_setting: session.add(BotSetting(key="search_enabled", value=s_val))
-            else: s_setting.value = s_val
-                
-            ad_val = "true" if auto_delete_enabled == "on" else "false"
-            ad_setting = await session.execute(select(BotSetting).where(BotSetting.key == "auto_delete_enabled"))
-            ad_setting = ad_setting.scalar_one_or_none()
-            if not ad_setting: session.add(BotSetting(key="auto_delete_enabled", value=ad_val))
-            else: ad_setting.value = ad_val
-                
-            seconds_val = auto_delete_seconds if auto_delete_seconds.isdigit() else "3600"
-            secs_setting = await session.execute(select(BotSetting).where(BotSetting.key == "auto_delete_seconds"))
-            secs_setting = secs_setting.scalar_one_or_none()
-            if not secs_setting: session.add(BotSetting(key="auto_delete_seconds", value=seconds_val))
-            else: secs_setting.value = seconds_val
-                
-            pf_val = "true" if protect_forwarding == "on" else "false"
-            pf_setting = await session.execute(select(BotSetting).where(BotSetting.key == "protect_forwarding"))
-            pf_setting = pf_setting.scalar_one_or_none()
-            if not pf_setting: session.add(BotSetting(key="protect_forwarding", value=pf_val))
-            else: pf_setting.value = pf_val
-                
-            pfm_setting = await session.execute(select(BotSetting).where(BotSetting.key == "post_file_message"))
-            pfm_setting = pfm_setting.scalar_one_or_none()
-            if not pfm_setting: session.add(BotSetting(key="post_file_message", value=post_file_message))
-            else: pfm_setting.value = post_file_message
-                
-            st_setting = await session.execute(select(BotSetting).where(BotSetting.key == "start_text"))
-            st_setting = st_setting.scalar_one_or_none()
-            if not st_setting: session.add(BotSetting(key="start_text", value=start_text))
-            else: st_setting.value = start_text
-                
-            at_setting = await session.execute(select(BotSetting).where(BotSetting.key == "about_text"))
-            at_setting = at_setting.scalar_one_or_none()
-            if not at_setting: session.add(BotSetting(key="about_text", value=about_text))
-            else: at_setting.value = about_text
-                
-            pt_setting = await session.execute(select(BotSetting).where(BotSetting.key == "premium_text"))
-            pt_setting = pt_setting.scalar_one_or_none()
-            if not pt_setting: session.add(BotSetting(key="premium_text", value=premium_text))
-            else: pt_setting.value = premium_text
+            async def save_setting(key: str, value: str):
+                s_setting = await session.execute(select(BotSetting).where(BotSetting.key == key))
+                s_setting = s_setting.scalar_one_or_none()
+                if not s_setting: session.add(BotSetting(key=key, value=value))
+                else: s_setting.value = value
+
+            await save_setting("search_enabled", "true" if search_enabled == "on" else "false")
+            await save_setting("auto_delete_enabled", "true" if auto_delete_enabled == "on" else "false")
+            await save_setting("auto_delete_seconds", auto_delete_seconds if auto_delete_seconds.isdigit() else "3600")
+            await save_setting("protect_forwarding", "true" if protect_forwarding == "on" else "false")
+            await save_setting("post_file_message", post_file_message)
+            await save_setting("start_text", start_text)
+            await save_setting("about_text", about_text)
+            await save_setting("premium_text", premium_text)
+            await save_setting("premium_enabled", "true" if premium_enabled == "on" else "false")
+            await save_setting("free_search_limit", free_search_limit if free_search_limit.isdigit() else "5")
+            await save_setting("premium_search_limit", prem_search_limit if prem_search_limit.isdigit() else "100")
+            await save_setting("shortlink_enabled", "true" if shortlink_enabled == "on" else "false")
+            await save_setting("shortlink_api_url", shortlink_api_url)
+            await save_setting("shortlink_api_key", shortlink_api_key)
                 
         return RedirectResponse(url="/admin/settings", status_code=303)
     except Exception as e:
