@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import Document
 from app.utils.logger import logger
 
-
 async def create_document(session: AsyncSession, *, file_id: str, message_id: Optional[int] = None, file_name: str, subject: Optional[str] = None, category: Optional[str] = None, class_name: Optional[str] = None, year: Optional[int] = None, keywords: Optional[List[str]] = None, description: Optional[str] = None, uploaded_by: Optional[int] = None, approved: bool = True) -> Document:
     doc = Document(
         file_id=file_id, message_id=message_id, file_name=file_name, subject=subject, category=category, 
@@ -71,7 +70,6 @@ async def approve_document(session: AsyncSession, doc_id: int) -> bool:
     return True
 
 async def delete_duplicates(session: AsyncSession) -> int:
-    """Deletes documents with duplicate file_names, keeping only the oldest one (smallest ID)."""
     try:
         result = await session.execute(text("""
             DELETE FROM documents
