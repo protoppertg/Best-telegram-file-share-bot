@@ -9,9 +9,9 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.models import SearchLog, User
+from app.models import SearchLog, User, BotSetting
+from app.database import get_session
 from app.utils.logger import logger
-
 
 async def get_or_create_user(session: AsyncSession, telegram_id: int, username: Optional[str] = None, first_name: Optional[str] = None, last_name: Optional[str] = None) -> User:
     result = await session.execute(select(User).where(User.telegram_id == telegram_id))
@@ -28,7 +28,6 @@ async def get_or_create_user(session: AsyncSession, telegram_id: int, username: 
         if changed: await session.flush()
     return user
 
-
 async def reset_daily_counts_if_needed(session: AsyncSession, user: User) -> bool:
     today = date.today()
     if user.last_reset_date is None or user.last_reset_date < today:
@@ -43,9 +42,23 @@ async def reset_daily_counts_if_needed(session: AsyncSession, user: User) -> boo
         return True
     return False
 
-
 async def get_user_search_limit(user: User) -> int:
-    return settings.PREMIUM_SEARCH_LIMIT if user.is_premium else settings.FREE_SEARCH_LIMIT
+    async with get_session() as session:
+        prem_enabled = await session.execute(select(BotSetting).where(BotSetting.key == "premium_enabled"))
+        prem_enabled = prem_enabled.scalar_one_or_none()
+        if prem_enabled and prem_enabled.value == "false":
+            limit_setting = await session.execute(select(BotSetting).where(BotSetting.key == "free_search_limit"))
+            limit_setting = limit_setting.scalar_one_or_none()
+            return int(limit_setting.value) if limit_setting and limit_setting.value.isdigit() else settings.FREE_SEARCH_LIMIT
+        
+        if user.is_premium:
+            limit_setting = await session.execute(select(BotSetting).where(BotSetting.key == "premium_search_limit"))
+            limit_setting = limit_setting.scalar_one_or_none()
+            return int(limit_setting.value) if limit_setting and limit_setting.value.isdigit() else settings.PREMIUM_SEARCH_LIMIT
+        else:
+            limit_setting = await session.execute(select(BotSetting).where(BotSetting.key == "free_search_limit"))
+            limit_setting = limit_setting.scalar_one_or_none()
+            return int(limit_setting.value) if limit_setting and limit_setting.value.isdigit() else settings.FREE_SEARCH_LIMIT
 
 async def get_user_upload_limit(user: User) -> int:
     return settings.PREMIUM_UPLOAD_LIMIT if user.is_premium else settings.FREE_UPLOAD_LIMIT
@@ -78,31 +91,22 @@ async def increment_upload_count(session: AsyncSession, telegram_id: int) -> Non
         logger.error("increment_upload_error", error=str(e))
         await session.rollback()
 
-
 async def activate_premium(telegram_id: int, duration_days: int) -> bool:
-    from app.database import get_session
     async with get_session() as session:
         result = await session.execute(select(User).where(User.telegram_id == telegram_id))
         user = result.scalar_one_or_none()
         if not user: return False
-        
         user.is_premium = True
         now = datetime.now(timezone.utc)
-        
-        # If user already has active premium, extend from current expiry. Else, start from now.
         base = user.premium_expiry if user.is_premium and user.premium_expiry and user.premium_expiry > now else now
-        
         if duration_days == 0:
-            # 0 means Lifetime (100 years)
             user.premium_expiry = base + timedelta(days=36500)
         else:
             user.premium_expiry = base + timedelta(days=duration_days)
-            
         await session.flush()
         return True
 
 async def revoke_premium(telegram_id: int) -> bool:
-    from app.database import get_session
     async with get_session() as session:
         result = await session.execute(select(User).where(User.telegram_id == telegram_id))
         user = result.scalar_one_or_none()
@@ -113,7 +117,6 @@ async def revoke_premium(telegram_id: int) -> bool:
         return True
 
 async def ban_user(telegram_id: int) -> bool:
-    from app.database import get_session
     async with get_session() as session:
         result = await session.execute(select(User).where(User.telegram_id == telegram_id))
         user = result.scalar_one_or_none()
@@ -123,7 +126,6 @@ async def ban_user(telegram_id: int) -> bool:
         return True
 
 async def unban_user(telegram_id: int) -> bool:
-    from app.database import get_session
     async with get_session() as session:
         result = await session.execute(select(User).where(User.telegram_id == telegram_id))
         user = result.scalar_one_or_none()
@@ -133,7 +135,6 @@ async def unban_user(telegram_id: int) -> bool:
         return True
 
 async def reset_search_count(telegram_id: int) -> bool:
-    from app.database import get_session
     async with get_session() as session:
         result = await session.execute(select(User).where(User.telegram_id == telegram_id))
         user = result.scalar_one_or_none()
