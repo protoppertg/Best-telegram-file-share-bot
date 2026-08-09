@@ -328,6 +328,15 @@ async def deep_clean():
         
     return "✅ Deep Clean Complete! Broken files and duplicates removed. Please hard-refresh your browser (Ctrl+F5)."
 
+@router.get("/fix_sequence", dependencies=[Depends(verify_admin)])
+async def fix_sequence():
+    """Resets the database ID counter so the next upload is exactly +1 from the current max ID."""
+    from sqlalchemy import text
+    async with get_session() as session:
+        await session.execute(text("SELECT setval(pg_get_serial_sequence('documents', 'id'), (SELECT MAX(id) FROM documents));"))
+        
+    return "✅ Success! The ID counter has been reset. The next file you upload will be exactly +1 from your highest current ID."
+
 # ── Database Migration Tool ─────────────────────
 
 @router.get("/migrate", dependencies=[Depends(verify_admin)])
@@ -393,16 +402,3 @@ async def migrate_data():
     await new_conn.close()
     
     return f"✅ Success! Copied {len(users)} users, {len(docs)} documents, and {len(settings_row)} settings to the new database."
-
-
-
-    
-    @router.get("/fix_sequence", dependencies=[Depends(verify_admin)])
-    async def fix_sequence():
-    """Resets the database ID counter so the next upload is exactly +1 from the current max ID."""
-    from sqlalchemy import text
-    async with get_session() as session:
-        # This tells the database to look at the highest ID and set the counter to exactly +1
-        await session.execute(text("SELECT setval(pg_get_serial_sequence('documents', 'id'), (SELECT MAX(id) FROM documents));"))
-        
-    return "✅ Success! The ID counter has been reset. The next file you upload will be exactly +1 from your highest current ID."
