@@ -44,7 +44,15 @@ class Settings(BaseSettings):
 
     @property
     def admin_ids_list(self) -> List[int]:
-        return [int(x.strip()) for x in self.ADMIN_IDS.split(",") if x.strip()]
+        ids = []
+        for x in self.ADMIN_IDS.split(","):
+            clean_x = x.strip().strip('"').strip("'") # Removes invisible quotes
+            if clean_x:
+                try:
+                    ids.append(int(clean_x))
+                except ValueError:
+                    pass
+        return ids
 
     @property
     def max_file_size_bytes(self) -> int:
