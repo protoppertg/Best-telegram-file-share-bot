@@ -12,7 +12,7 @@ import asyncpg
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import select
+from sqlalchemy import select, func, text
 
 from app.config import settings
 from app.database import get_session
@@ -203,8 +203,12 @@ async def admin_documents(request: Request, page: int = 1, q: Optional[str] = No
         else: stmt = select(Document)
         result = await session.execute(stmt.order_by(Document.created_at.desc()).offset((page - 1) * per_page).limit(per_page))
         docs = result.scalars().all()
-        total = (await session.execute(select(Document).where(Document.file_name.ilike(f"%{q}%")) if q else select(Document))).scalars().all()
-        total = len(total)
+        
+        # FIXED: Use SQL Count instead of fetching all rows into memory
+        count_stmt = select(func.count(Document.id))
+        if q: count_stmt = count_stmt.where(Document.file_name.ilike(f"%{q}%"))
+        total = (await session.execute(count_stmt)).scalar() or 0
+        
     total_pages = max(1, (total + per_page - 1) // per_page)
     return templates.TemplateResponse(request, "documents.html", {"docs": docs, "page": page, "total_pages": total_pages, "q": q, "active": "documents"})
 
@@ -250,8 +254,11 @@ async def admin_users(request: Request, page: int = 1, q: Optional[str] = None):
         else: stmt = select(User)
         result = await session.execute(stmt.order_by(User.created_at.desc()).offset((page - 1) * per_page).limit(per_page))
         users = result.scalars().all()
-        all_users = (await session.execute(stmt)).scalars().all()
-        total = len(all_users)
+        
+        count_stmt = select(func.count(User.id))
+        if q: count_stmt = count_stmt.where((User.username.ilike(f"%{q}%")) | (User.telegram_id == q))
+        total = (await session.execute(count_stmt)).scalar() or 0
+        
     total_pages = max(1, (total + per_page - 1) // per_page)
     return templates.TemplateResponse(request, "users.html", {"users": users, "page": page, "total_pages": total_pages, "q": q, "active": "users"})
 
@@ -294,10 +301,34 @@ async def admin_reset_search(telegram_id: int):
     await user_service.reset_search_count(telegram_id)
     return RedirectResponse(url=f"/admin/users/{telegram_id}", status_code=303)
 
+
+# ── Automated Cleanup Tools ─────────────────────
+
+@router.get("/deep_clean", dependencies=[Depends(verify_admin)])
+async def deep_clean():
+    """Deletes broken rows, empty rows, and exact duplicate file_ids."""
+    async with get_session() as session:
+        # 1. Delete rows with missing file_id or file_name
+        await session.execute(text("DELETE FROM documents WHERE file_id IS NULL OR file_name IS NULL OR file_name = ''"))
+        
+        # 2. Delete duplicate file_ids (keep the oldest one)
+        await session.execute(text("""
+            DELETE FROM documents
+            WHERE id NOT IN (
+                SELECT MIN(id)
+                FROM documents
+                GROUP BY file_id
+            )
+        """))
+        
+    return "✅ Deep Clean Complete! Broken files and duplicates removed. Please hard-refresh your browser (Ctrl+F5)."
+
+
+# ── Database Migration Tool ─────────────────────
+
 @router.get("/migrate", dependencies=[Depends(verify_admin)])
 async def migrate_data():
-    """Temporary route to copy data from Render to Supabase."""
-    from app.config import settings
+    """Temporary route to copy data from Render to Supabase (Fast Bulk Version)."""
     old_url = settings.DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")
     new_url = os.environ.get("NEW_DATABASE_URL")
     
@@ -313,7 +344,7 @@ async def migrate_data():
     except Exception as e:
         return f"Connection failed: {e}"
 
-    # Create tables in new DB
+    # 1. Create tables in new DB (just in case)
     await new_conn.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id SERIAL PRIMARY KEY, telegram_id BIGINT UNIQUE NOT NULL, username VARCHAR(255),
@@ -334,49 +365,31 @@ async def migrate_data():
     """)
     await new_conn.execute("""CREATE TABLE IF NOT EXISTS bot_settings (key VARCHAR(50) PRIMARY KEY, value TEXT);""")
 
-    # Copy Users
-    users = await old_conn.fetch("SELECT * FROM users")
-    for u in users:
-        await new_conn.execute(
+    # 2. Bulk Copy Users
+    users = await old_conn.fetch("SELECT telegram_id, username, first_name, last_name, is_premium, premium_expiry, is_banned, search_count, upload_count, last_reset_date FROM users")
+    if users:
+        await new_conn.executemany(
             "INSERT INTO users (telegram_id, username, first_name, last_name, is_premium, premium_expiry, is_banned, search_count, upload_count, last_reset_date) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) ON CONFLICT DO NOTHING",
-            u['telegram_id'], u['username'], u['first_name'], u['last_name'], u['is_premium'], u['premium_expiry'], u['is_banned'], u['search_count'], u['upload_count'], u['last_reset_date']
+            [(u['telegram_id'], u['username'], u['first_name'], u['last_name'], u['is_premium'], u['premium_expiry'], u['is_banned'], u['search_count'], u['upload_count'], u['last_reset_date']) for u in users]
         )
 
-    # Copy Documents
-    docs = await old_conn.fetch("SELECT * FROM documents")
-    for d in docs:
-        await new_conn.execute(
+    # 3. Bulk Copy Documents
+    docs = await old_conn.fetch("SELECT file_id, message_id, file_name, subject, category, class_name, year, keywords, description, uploaded_by, approved FROM documents")
+    if docs:
+        await new_conn.executemany(
             "INSERT INTO documents (file_id, message_id, file_name, subject, category, class_name, year, keywords, description, uploaded_by, approved) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) ON CONFLICT DO NOTHING",
-            d['file_id'], d['message_id'], d['file_name'], d['subject'], d['category'], d['class_name'], d['year'], d['keywords'], d['description'], d['uploaded_by'], d['approved']
+            [(d['file_id'], d['message_id'], d['file_name'], d['subject'], d['category'], d['class_name'], d['year'], d['keywords'], d['description'], d['uploaded_by'], d['approved']) for d in docs]
         )
 
-    # Copy Settings
-    settings_row = await old_conn.fetch("SELECT * FROM bot_settings")
-    for s in settings_row:
-        await new_conn.execute("INSERT INTO bot_settings (key, value) VALUES ($1, $2) ON CONFLICT DO NOTHING", s['key'], s['value'])
+    # 4. Bulk Copy Settings
+    settings_row = await old_conn.fetch("SELECT key, value FROM bot_settings")
+    if settings_row:
+        await new_conn.executemany(
+            "INSERT INTO bot_settings (key, value) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+            [(s['key'], s['value']) for s in settings_row]
+        )
 
     await old_conn.close()
     await new_conn.close()
     
     return f"✅ Success! Copied {len(users)} users, {len(docs)} documents, and {len(settings_row)} settings to the new database."
-
-
-
-
-@router.get("/fix_count", dependencies=[Depends(verify_admin)])
-async def fix_count():
-    """Automatically deletes duplicate files based on their Telegram file_id."""
-    from sqlalchemy import text
-    async with get_session() as session:
-        # This SQL command keeps only ONE copy of each file_id and deletes the rest
-        result = await session.execute(text("""
-            DELETE FROM documents
-            WHERE id NOT IN (
-                SELECT MIN(id)
-                FROM documents
-                GROUP BY file_id
-            )
-        """))
-        deleted_count = result.rowcount or 0
-        
-    return f"✅ Cleanup Complete! Automatically deleted {deleted_count} duplicate files. Your count is now accurate!"
