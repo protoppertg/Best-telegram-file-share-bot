@@ -23,6 +23,7 @@ def setup_dispatcher(dispatcher: Dispatcher = dp) -> None:
     from app.middleware.auth import AuthMiddleware
     from app.middleware.rate_limit import RateLimitMiddleware
 
+    # Load Admin Router FIRST
     dispatcher.include_router(admin_router)
     dispatcher.include_router(callback_router)
     dispatcher.include_router(user_router)
