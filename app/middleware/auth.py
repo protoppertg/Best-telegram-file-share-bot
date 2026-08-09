@@ -10,6 +10,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from sqlalchemy import select
 
 from app.bot import bot
+from app.config import settings
 from app.database import get_session
 from app.models import BotSetting, User
 from app.services.user import get_or_create_user, reset_daily_counts_if_needed
@@ -29,6 +30,18 @@ class AuthMiddleware(BaseMiddleware):
         if tg_user is None:
             return await handler(event, data)
 
+        # ── ADMIN BYPASS ──────────────────────────
+        # If you are an admin, skip all database checks so /admin always works
+        if tg_user.id in settings.admin_ids_list:
+            try:
+                async with get_session() as session:
+                    user = await get_or_create_user(session, telegram_id=tg_user.id, username=tg_user.username, first_name=tg_user.first_name, last_name=tg_user.last_name)
+                    data["db_user"] = user
+            except Exception as exc:
+                logger.error("admin_db_sync_error", error=str(exc), exc_info=True)
+            return await handler(event, data)
+
+        # ── NORMAL USER FLOW ──────────────────────
         try:
             async with get_session() as session:
                 user = await get_or_create_user(session, telegram_id=tg_user.id, username=tg_user.username, first_name=tg_user.first_name, last_name=tg_user.last_name)
@@ -71,5 +84,6 @@ class AuthMiddleware(BaseMiddleware):
             data["db_user"] = user
         except Exception as exc:
             logger.error("auth_middleware_error", error=str(exc), exc_info=True)
+            # If database fails for a normal user, we still let them try basic commands without db_user
             
         return await handler(event, data)
