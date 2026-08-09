@@ -359,9 +359,12 @@ async def migrate_data():
     await new_conn.close()
     
     return f"✅ Success! Copied {len(users)} users, {len(docs)} documents, and {len(settings_row)} settings to the new database."
-    @router.get("/fix_count", dependencies=[Depends(verify_admin)])
 
-    async def fix_count():
+
+
+
+@router.get("/fix_count", dependencies=[Depends(verify_admin)])
+async def fix_count():
     """Automatically deletes duplicate files based on their Telegram file_id."""
     from sqlalchemy import text
     async with get_session() as session:
