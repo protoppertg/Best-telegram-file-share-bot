@@ -24,22 +24,26 @@ router = Router()
 
 class AdminFilter(BaseFilter):
     async def __call__(self, message: Message) -> bool:
+        import os
         # Allow channel posts to bypass the admin check
         if message.chat.type == "channel":
             return True
             
-        # Debug log to see exactly what the bot is reading
-        logger.info("AdminFilter Check", user_id=message.from_user.id if message.from_user else None, admin_list=settings.admin_ids_list)
-        
         if not message.from_user:
             return False
             
-        # Check if user is in admin list
+        # --- DEBUG PRINT ---
+        # This will print EXACTLY what Render is passing to the bot
+        raw_env = os.environ.get("ADMIN_IDS", "VARIABLE DOES NOT EXIST")
+        print(f"DEBUG ADMIN CHECK: User ID={message.from_user.id} | Raw ADMIN_IDS env var={raw_env} | Parsed List={settings.admin_ids_list}")
+        # -------------------
+        
         is_admin = message.from_user.id in settings.admin_ids_list
         if not is_admin:
-            logger.warning(f"Access Denied: User {message.from_user.id} is not in ADMIN_IDS {settings.admin_ids_list}")
+            print(f"DEBUG ADMIN DENIED: {message.from_user.id} not in {settings.admin_ids_list}")
             
         return is_admin
+        
 
 class ForceSubStates(StatesGroup):
     waiting_channel_id = State()
