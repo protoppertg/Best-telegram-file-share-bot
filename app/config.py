@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from typing import List
+import os
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -18,7 +19,6 @@ class Settings(BaseSettings):
     WEBHOOK_SECRET: str = ""
     DATABASE_URL: str
     REDIS_URL: str = ""
-    ADMIN_IDS: str = ""
     CHANNEL_ID: str
 
     FREE_SEARCH_LIMIT: int = 5
@@ -44,14 +44,13 @@ class Settings(BaseSettings):
 
     @property
     def admin_ids_list(self) -> List[int]:
+        # Read directly from OS environment to bypass any caching
+        raw_env = os.environ.get("ADMIN_IDS", "")
         ids = []
-        for x in self.ADMIN_IDS.split(","):
-            clean_x = x.strip().strip('"').strip("'") # Removes invisible quotes
-            if clean_x:
-                try:
-                    ids.append(int(clean_x))
-                except ValueError:
-                    pass
+        for x in raw_env.split(","):
+            x = x.strip().strip('"').strip("'")
+            if x.isdigit():
+                ids.append(int(x))
         return ids
 
     @property
