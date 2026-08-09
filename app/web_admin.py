@@ -359,3 +359,21 @@ async def migrate_data():
     await new_conn.close()
     
     return f"✅ Success! Copied {len(users)} users, {len(docs)} documents, and {len(settings_row)} settings to the new database."
+    @router.get("/fix_count", dependencies=[Depends(verify_admin)])
+
+    async def fix_count():
+    """Automatically deletes duplicate files based on their Telegram file_id."""
+    from sqlalchemy import text
+    async with get_session() as session:
+        # This SQL command keeps only ONE copy of each file_id and deletes the rest
+        result = await session.execute(text("""
+            DELETE FROM documents
+            WHERE id NOT IN (
+                SELECT MIN(id)
+                FROM documents
+                GROUP BY file_id
+            )
+        """))
+        deleted_count = result.rowcount or 0
+        
+    return f"✅ Cleanup Complete! Automatically deleted {deleted_count} duplicate files. Your count is now accurate!"
