@@ -394,6 +394,9 @@ async def migrate_data():
     
     return f"✅ Success! Copied {len(users)} users, {len(docs)} documents, and {len(settings_row)} settings to the new database."
 
+
+
+    
     @router.get("/fix_sequence", dependencies=[Depends(verify_admin)])
     async def fix_sequence():
     """Resets the database ID counter so the next upload is exactly +1 from the current max ID."""
