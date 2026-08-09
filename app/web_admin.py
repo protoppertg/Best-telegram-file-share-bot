@@ -6,6 +6,8 @@ from typing import Optional
 from pathlib import Path
 import asyncio
 import json
+import os
+import asyncpg
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
@@ -291,9 +293,6 @@ async def admin_unban_user(telegram_id: int):
 async def admin_reset_search(telegram_id: int):
     await user_service.reset_search_count(telegram_id)
     return RedirectResponse(url=f"/admin/users/{telegram_id}", status_code=303)
-
-import os
-import asyncpg
 
 @router.get("/migrate", dependencies=[Depends(verify_admin)])
 async def migrate_data():
