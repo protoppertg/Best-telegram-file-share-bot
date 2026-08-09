@@ -6,7 +6,7 @@ import asyncio
 import json
 from html import escape
 from aiogram import Bot, F, Router
-from aiogram.filters import BaseFilter, Command, CommandObject
+from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
@@ -22,28 +22,8 @@ from app.utils.validators import sanitise_text, parse_keywords, parse_year
 
 router = Router()
 
-class AdminFilter(BaseFilter):
-    async def __call__(self, message: Message) -> bool:
-        import os
-        # Allow channel posts to bypass the admin check
-        if message.chat.type == "channel":
-            return True
-            
-        if not message.from_user:
-            return False
-            
-        # --- DEBUG PRINT ---
-        # This will print EXACTLY what Render is passing to the bot
-        raw_env = os.environ.get("ADMIN_IDS", "VARIABLE DOES NOT EXIST")
-        print(f"DEBUG ADMIN CHECK: User ID={message.from_user.id} | Raw ADMIN_IDS env var={raw_env} | Parsed List={settings.admin_ids_list}")
-        # -------------------
-        
-        is_admin = message.from_user.id in settings.admin_ids_list
-        if not is_admin:
-            print(f"DEBUG ADMIN DENIED: {message.from_user.id} not in {settings.admin_ids_list}")
-            
-        return is_admin
-        
+# We no longer use a silent filter. We check inside the command.
+# This guarantees the bot will always reply to /admin.
 
 class ForceSubStates(StatesGroup):
     waiting_channel_id = State()
@@ -143,19 +123,30 @@ def admin_doc_actions_kb(doc_id: int, approved: bool):
     kb.adjust(1)
     return kb.as_markup()
 
+
 @router.message(Command("admin"))
 async def cmd_admin(message: Message, state: FSMContext):
     await state.clear()
+    
+    # DIRECT ADMIN CHECK - This will always reply
+    if message.from_user.id not in settings.admin_ids_list:
+        await message.answer(f"❌ Access Denied.\nYour ID is: {message.from_user.id}\nAdmin IDs loaded: {settings.admin_ids_list}")
+        return
+        
     await message.answer("🔧 <b>Admin Panel</b>\n\nWelcome to the control center. Select an option below:", reply_markup=admin_menu_kb())
 
 @router.callback_query(F.data == "adm:menu")
 async def cb_admin_menu(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in settings.admin_ids_list:
+        await callback.answer("Access Denied.", show_alert=True)
+        return
     await state.clear()
     await callback.message.edit_text("🔧 <b>Admin Panel</b>\n\nSelect an option below:", reply_markup=admin_menu_kb())
     await callback.answer()
 
 @router.callback_query(F.data == "adm:stats")
 async def cb_admin_stats(callback: CallbackQuery):
+    if callback.from_user.id not in settings.admin_ids_list: return
     async with get_session() as session:
         stats = await user_service.get_stats(session)
     text = (
@@ -172,6 +163,7 @@ async def cb_admin_stats(callback: CallbackQuery):
 
 @router.callback_query(F.data == "adm:bcast")
 async def cb_admin_bcast(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in settings.admin_ids_list: return
     await state.set_state(BroadcastStates.waiting_message)
     await callback.message.edit_text(
         "📢 <b>Broadcast Message</b>\n\n"
@@ -218,6 +210,7 @@ async def _background_bcast(bot: Bot, admin_chat_id: int, message_id: int, user_
 
 @router.callback_query(F.data == "adm:fs")
 async def cb_admin_fs(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in settings.admin_ids_list: return
     await state.clear()
     async with get_session() as session:
         channels = await get_force_sub_channels(session)
@@ -236,6 +229,7 @@ async def cb_admin_fs(callback: CallbackQuery, state: FSMContext):
 
 @router.message(ForceSubStates.waiting_channel_id, F.text & ~F.text.startswith("/"))
 async def fs_channel_id(message: Message, state: FSMContext):
+    if message.from_user.id not in settings.admin_ids_list: return
     channel_id = message.text.strip()
     if not channel_id.startswith("-100"):
         await message.answer("Invalid ID. It must start with -100. Try again or /cancel:")
@@ -246,6 +240,7 @@ async def fs_channel_id(message: Message, state: FSMContext):
 
 @router.message(ForceSubStates.waiting_invite_link, F.text & ~F.text.startswith("/"))
 async def fs_invite_link(message: Message, state: FSMContext):
+    if message.from_user.id not in settings.admin_ids_list: return
     link = message.text.strip()
     if not link.startswith("https://t.me/"):
         await message.answer("Invalid link. Must start with https://t.me/. Try again or /cancel:")
@@ -261,6 +256,7 @@ async def fs_invite_link(message: Message, state: FSMContext):
 
 @router.message(ForceSubStates.waiting_channel_id, Command("clear"))
 async def fs_clear(message: Message, state: FSMContext):
+    if message.from_user.id not in settings.admin_ids_list: return
     await state.clear()
     async with get_session() as session:
         await save_force_sub_channels(session, [])
@@ -307,6 +303,7 @@ async def auto_index_channel_post(message: Message, bot: Bot):
 
 @router.message(Command("edit_doc"))
 async def cmd_edit_doc(message: Message, command: CommandObject):
+    if message.from_user.id not in settings.admin_ids_list: return
     if not command.args:
         await message.answer(
             "Usage: <code>/edit_doc [id] [field]=[value]</code>\n\n"
@@ -352,6 +349,7 @@ async def cmd_edit_doc(message: Message, command: CommandObject):
 
 @router.message(Command("dedupe"))
 async def cmd_dedupe(message: Message):
+    if message.from_user.id not in settings.admin_ids_list: return
     async with get_session() as session:
         deleted_count = await doc_service.delete_duplicates(session)
     if deleted_count > 0:
@@ -361,6 +359,7 @@ async def cmd_dedupe(message: Message):
 
 @router.callback_query(F.data.startswith("adm:users:"))
 async def cb_admin_users(callback: CallbackQuery):
+    if callback.from_user.id not in settings.admin_ids_list: return
     page = int(callback.data.split(":")[2])
     per_page = 5
     async with get_session() as session:
@@ -373,6 +372,7 @@ async def cb_admin_users(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("adm:u:"))
 async def cb_admin_user_actions(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in settings.admin_ids_list: return
     parts = callback.data.split(":")
     telegram_id = int(parts[2])
     
@@ -433,6 +433,7 @@ async def cancel_dm(message: Message, state: FSMContext):
 
 @router.message(DirectMessageStates.waiting_message)
 async def perform_dm(message: Message, state: FSMContext, bot: Bot):
+    if message.from_user.id not in settings.admin_ids_list: return
     data = await state.get_data()
     target_id = data.get("target_id")
     await state.clear()
@@ -447,6 +448,7 @@ async def perform_dm(message: Message, state: FSMContext, bot: Bot):
 
 @router.callback_query(F.data.startswith("adm:docs:"))
 async def cb_admin_docs(callback: CallbackQuery):
+    if callback.from_user.id not in settings.admin_ids_list: return
     page = int(callback.data.split(":")[2])
     per_page = 5
     async with get_session() as session:
@@ -459,6 +461,7 @@ async def cb_admin_docs(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("adm:pend:"))
 async def cb_admin_pending(callback: CallbackQuery):
+    if callback.from_user.id not in settings.admin_ids_list: return
     page = int(callback.data.split(":")[2])
     per_page = 5
     async with get_session() as session:
@@ -474,6 +477,7 @@ async def cb_admin_pending(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("adm:doc:"))
 async def cb_admin_doc_actions(callback: CallbackQuery, bot: Bot):
+    if callback.from_user.id not in settings.admin_ids_list: return
     parts = callback.data.split(":")
     doc_id = int(parts[2])
     if len(parts) == 3:
