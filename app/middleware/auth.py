@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import json
+import os
 from typing import Any, Awaitable, Callable
 
 from aiogram import BaseMiddleware
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message, TelegramObject
+from aiogram.types import CallbackQuery, Message, TelegramObject
 from sqlalchemy import select
 
 from app.bot import bot
-from app.config import settings
 from app.database import get_session
 from app.models import BotSetting, User
 from app.services.user import get_or_create_user, reset_daily_counts_if_needed
@@ -30,9 +30,13 @@ class AuthMiddleware(BaseMiddleware):
         if tg_user is None:
             return await handler(event, data)
 
-        # ── ADMIN BYPASS ──────────────────────────
-        # If you are an admin, skip all database checks so /admin always works
-        if tg_user.id in settings.admin_ids_list:
+        # Direct OS Environment check (Bypasses all Pydantic/Render caching issues)
+        raw_admin_ids = os.environ.get("ADMIN_IDS", "")
+        admin_ids = [int(x.strip()) for x in raw_admin_ids.split(",") if x.strip().isdigit()]
+
+        # ── ABSOLUTE ADMIN BYPASS ──────────────────
+        # If you are an admin, skip ForceSub and Ban checks completely.
+        if tg_user.id in admin_ids:
             try:
                 async with get_session() as session:
                     user = await get_or_create_user(session, telegram_id=tg_user.id, username=tg_user.username, first_name=tg_user.first_name, last_name=tg_user.last_name)
@@ -63,10 +67,8 @@ class AuthMiddleware(BaseMiddleware):
                             member = await bot.get_chat_member(chat_id=chat_id, user_id=tg_user.id)
                             if member.status in ["left", "kicked"]:
                                 missing_channels.append(ch)
-                        except ValueError:
-                            logger.error("force_sub_invalid_id", channel_id=ch.get('id'))
                         except Exception as e:
-                            logger.error("force_sub_check_error", channel=ch.get('id'), error=str(e))
+                            logger.error("force_sub_check_error", error=str(e))
                     
                     if missing_channels:
                         from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -79,11 +81,10 @@ class AuthMiddleware(BaseMiddleware):
                         if isinstance(event, CallbackQuery):
                             await event.answer("You must join the channels first!", show_alert=True)
                         await bot.send_message(tg_user.id, "⚠️ You must join our channels to use this bot!", reply_markup=kb.as_markup())
-                        return
+                        return # Message is dropped here for non-admins
 
             data["db_user"] = user
         except Exception as exc:
             logger.error("auth_middleware_error", error=str(exc), exc_info=True)
-            # If database fails for a normal user, we still let them try basic commands without db_user
             
         return await handler(event, data)
