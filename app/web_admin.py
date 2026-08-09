@@ -291,3 +291,72 @@ async def admin_unban_user(telegram_id: int):
 async def admin_reset_search(telegram_id: int):
     await user_service.reset_search_count(telegram_id)
     return RedirectResponse(url=f"/admin/users/{telegram_id}", status_code=303)
+
+import os
+import asyncpg
+
+@router.get("/migrate", dependencies=[Depends(verify_admin)])
+async def migrate_data():
+    """Temporary route to copy data from Render to Supabase."""
+    from app.config import settings
+    old_url = settings.DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")
+    new_url = os.environ.get("NEW_DATABASE_URL")
+    
+    if not new_url:
+        return "Error: NEW_DATABASE_URL is not set in Render environment."
+        
+    if "sslmode" not in new_url:
+        new_url += "?sslmode=require"
+
+    try:
+        old_conn = await asyncpg.connect(old_url)
+        new_conn = await asyncpg.connect(new_url)
+    except Exception as e:
+        return f"Connection failed: {e}"
+
+    # Create tables in new DB
+    await new_conn.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id SERIAL PRIMARY KEY, telegram_id BIGINT UNIQUE NOT NULL, username VARCHAR(255),
+            first_name VARCHAR(255), last_name VARCHAR(255), is_premium BOOLEAN DEFAULT false,
+            premium_expiry TIMESTAMP WITH TIME ZONE, is_banned BOOLEAN DEFAULT false,
+            search_count INTEGER DEFAULT 0, upload_count INTEGER DEFAULT 0,
+            last_reset_date DATE DEFAULT CURRENT_DATE, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        );
+    """)
+    await new_conn.execute("""
+        CREATE TABLE IF NOT EXISTS documents (
+            id SERIAL PRIMARY KEY, file_id TEXT NOT NULL, message_id BIGINT, file_name TEXT NOT NULL,
+            subject VARCHAR(255), category VARCHAR(100), class_name VARCHAR(100), year INTEGER,
+            keywords TEXT[], description TEXT, uploaded_by BIGINT, approved BOOLEAN DEFAULT true,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(), updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        );
+    """)
+    await new_conn.execute("""CREATE TABLE IF NOT EXISTS bot_settings (key VARCHAR(50) PRIMARY KEY, value TEXT);""")
+
+    # Copy Users
+    users = await old_conn.fetch("SELECT * FROM users")
+    for u in users:
+        await new_conn.execute(
+            "INSERT INTO users (telegram_id, username, first_name, last_name, is_premium, premium_expiry, is_banned, search_count, upload_count, last_reset_date) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) ON CONFLICT DO NOTHING",
+            u['telegram_id'], u['username'], u['first_name'], u['last_name'], u['is_premium'], u['premium_expiry'], u['is_banned'], u['search_count'], u['upload_count'], u['last_reset_date']
+        )
+
+    # Copy Documents
+    docs = await old_conn.fetch("SELECT * FROM documents")
+    for d in docs:
+        await new_conn.execute(
+            "INSERT INTO documents (file_id, message_id, file_name, subject, category, class_name, year, keywords, description, uploaded_by, approved) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) ON CONFLICT DO NOTHING",
+            d['file_id'], d['message_id'], d['file_name'], d['subject'], d['category'], d['class_name'], d['year'], d['keywords'], d['description'], d['uploaded_by'], d['approved']
+        )
+
+    # Copy Settings
+    settings_row = await old_conn.fetch("SELECT * FROM bot_settings")
+    for s in settings_row:
+        await new_conn.execute("INSERT INTO bot_settings (key, value) VALUES ($1, $2) ON CONFLICT DO NOTHING", s['key'], s['value'])
+
+    await old_conn.close()
+    await new_conn.close()
+    
+    return f"✅ Success! Copied {len(users)} users, {len(docs)} documents, and {len(settings_row)} settings to the new database."
