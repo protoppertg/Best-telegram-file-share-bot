@@ -73,8 +73,16 @@ async def admin_logout(request: Request):
 async def admin_dashboard(request: Request):
     async with get_session() as session:
         stats = await user_service.get_stats(session)
-    return templates.TemplateResponse(request, "dashboard.html", {"stats": stats, "active": "dashboard"})
-
+        # Fetch top 5 referrers for the chart
+        top_ref_res = await session.execute(
+            select(User.username, User.referral_count)
+            .where(User.referral_count > 0)
+            .order_by(User.referral_count.desc())
+            .limit(5)
+        )
+        top_referrers = top_ref_res.all()
+    return templates.TemplateResponse(request, "dashboard.html", {"stats": stats, "top_referrers": top_referrers, "active": "dashboard"})
+    
 @router.get("/settings", dependencies=[Depends(verify_admin)], response_class=templates.TemplateResponse)
 async def admin_settings(request: Request):
     async with get_session() as session:
