@@ -33,12 +33,13 @@ async def _get_settings(session) -> dict:
         "premium_enabled": True
     }
     for row in settings_rows:
-        if row.key == "auto_delete_enabled" and row.value == "true": data["auto_delete_enabled"] = True
-        elif row.key == "auto_delete_seconds" and row.value.isdigit(): data["auto_delete_seconds"] = int(row.value)
-        elif row.key == "protect_forwarding" and row.value == "true": data["protect_forwarding"] = True
-        elif row.key == "post_file_message": data["post_file_message"] = row.value or ""
-        elif row.key == "shortlink_enabled" and row.value == "true": data["shortlink_enabled"] = True
-        elif row.key == "premium_enabled" and row.value == "false": data["premium_enabled"] = False
+        val = row.value or "" # Fail-safe for None values
+        if row.key == "auto_delete_enabled" and val == "true": data["auto_delete_enabled"] = True
+        elif row.key == "auto_delete_seconds" and val.isdigit(): data["auto_delete_seconds"] = int(val)
+        elif row.key == "protect_forwarding" and val == "true": data["protect_forwarding"] = True
+        elif row.key == "post_file_message": data["post_file_message"] = val
+        elif row.key == "shortlink_enabled" and val == "true": data["shortlink_enabled"] = True
+        elif row.key == "premium_enabled" and val == "false": data["premium_enabled"] = False
     return data
 
 async def _schedule_auto_delete(bot: Bot, chat_id: int, message_id: int, delay: int):
@@ -92,9 +93,6 @@ async def check_sub_callback(callback: CallbackQuery, bot: Bot):
                 "┣👉 <b>Search:</b> Type keywords or use advanced filters.\n"
                 "┣👉 <b>Upload:</b> Send a PDF to support the community.\n"
                 "┗👉 <b>Premium:</b> Unlock unlimited searches & ad-free downloads.\n\n"
-                "💡 <b>Advanced Search Tip:</b>\n"
-                "You can filter your search using tags!\n"
-                "<code>physics subject:Math class:10 year:2023</code>\n\n"
                 "<i>Ready to dive in? Just type a keyword below!</i>"
             )
             text = text_setting.value if text_setting and text_setting.value else default_text
@@ -160,7 +158,6 @@ async def get_file_callback(callback: CallbackQuery, bot: Bot, db_user: User | N
         await callback.answer("This file is pending approval.", show_alert=True)
         return
 
-    # Check shortlink. If premium is disabled, treat everyone as non-premium (show shortlinks)
     is_prem_enabled = bot_settings["premium_enabled"]
     user_is_premium = is_prem_enabled and db_user and db_user.is_premium
 
