@@ -382,3 +382,14 @@ async def cancel_fsm(message: Message, state: FSMContext):
     await state.clear()
     show_prem = await _is_premium_enabled()
     await message.answer("❌ Operation cancelled. What would you like to do next?", reply_markup=main_menu_kb(show_premium=show_prem))
+
+
+# Catch-all for unrecognized commands
+@router.message(F.text.startswith("/"))
+async def unknown_command(message: Message):
+    await message.answer("⚠️ I don't recognize this command. Please use the menu below!")
+
+# Catch-all for unrecognized text
+@router.message()
+async def unknown_text(message: Message):
+    await message.answer("🤖 I didn't understand that. Please use the buttons below or type a search query!")
