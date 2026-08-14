@@ -102,8 +102,9 @@ async def cmd_referral(message: Message, db_user: User | None = None):
     async with get_session() as session:
         res = await session.execute(select(BotSetting).where(BotSetting.key.in_(["referral_reward_type", "referral_reward_amount"])))
         s_dict = {r.key: r.value for r in res.scalars().all()}
-        r_type = s_dict.get("referral_reward_type", "searches")
-        r_amount = int(s_dict.get("referral_reward_amount", "1") or "1")
+        r_type = s_dict.get("referral_reward_type") or "searches"
+        r_amount_val = s_dict.get("referral_reward_amount") or "1"
+        r_amount = int(r_amount_val) if r_amount_val and r_amount_val.isdigit() else 1
 
     if r_type == "premium":
         reward_text = f"<b>{r_amount} Days of Premium</b>"
@@ -219,7 +220,7 @@ async def cmd_search(message: Message, command: CommandObject, db_user: User | N
 @router.message(StateFilter(None), F.text & ~F.text.startswith("/"))
 async def text_search(message: Message, db_user: User | None = None):
     query = message.text.strip()
-    if query in ["🔍 Search", "📤 Upload", "🎟️ Premium", "❓ Help"]:
+    if query in ["🔍 Search", "📤 Upload", "🎟️ Premium", "🤝 Referral", "❓ Help"]:
         return
     if not is_valid_search_query(query):
         await message.answer("🔍 Your query is too short. Please enter at least 2 characters.")
@@ -433,13 +434,7 @@ async def cancel_fsm(message: Message, state: FSMContext):
     show_prem = await _is_premium_enabled()
     await message.answer("❌ Operation cancelled. What would you like to do next?", reply_markup=main_menu_kb(show_premium=show_prem))
 
-
 # Catch-all for unrecognized commands
 @router.message(F.text.startswith("/"))
 async def unknown_command(message: Message):
     await message.answer("⚠️ I don't recognize this command. Please use the menu below!")
-
-# Catch-all for unrecognized text
-@router.message()
-async def unknown_text(message: Message):
-    await message.answer("🤖 I didn't understand that. Please use the buttons below or type a search query!")
