@@ -44,28 +44,26 @@ async def reset_daily_counts_if_needed(session: AsyncSession, user: User) -> boo
 
 async def get_user_search_limit(user: User) -> int:
     async with get_session() as session:
-        # OPTIMIZED: Fetch all settings in one single DB query
         res = await session.execute(select(BotSetting).where(BotSetting.key.in_([
             "premium_enabled", "free_search_limit", "premium_search_limit", "referral_reward_type", "referral_reward_amount"
         ])))
         settings_dict = {row.key: row.value for row in res.scalars().all()}
 
-        prem_enabled = settings_dict.get("premium_enabled", "true") == "true"
-        r_type = settings_dict.get("referral_reward_type", "searches")
-        r_amount_val = settings_dict.get("referral_reward_amount", "0")
-        r_amount = int(r_amount_val) if r_amount_val.isdigit() else 0
+        prem_enabled = (settings_dict.get("premium_enabled") or "true") == "true"
+        r_type = settings_dict.get("referral_reward_type") or "searches"
+        r_amount_val = settings_dict.get("referral_reward_amount") or "0"
+        r_amount = int(r_amount_val) if r_amount_val and r_amount_val.isdigit() else 0
         
-        # Calculate referral bonus (only if reward type is permanent searches)
         ref_bonus = (r_amount * user.referral_count) if r_type == "searches" else 0
 
         if not prem_enabled:
-            base_val = settings_dict.get("free_search_limit", str(settings.FREE_SEARCH_LIMIT))
+            base_val = settings_dict.get("free_search_limit") or str(settings.FREE_SEARCH_LIMIT)
             return int(base_val) + ref_bonus
         
         if user.is_premium:
-            base_val = settings_dict.get("premium_search_limit", str(settings.PREMIUM_SEARCH_LIMIT))
+            base_val = settings_dict.get("premium_search_limit") or str(settings.PREMIUM_SEARCH_LIMIT)
         else:
-            base_val = settings_dict.get("free_search_limit", str(settings.FREE_SEARCH_LIMIT))
+            base_val = settings_dict.get("free_search_limit") or str(settings.FREE_SEARCH_LIMIT)
         
         return int(base_val) + ref_bonus
 
@@ -102,25 +100,22 @@ async def increment_upload_count(session: AsyncSession, telegram_id: int) -> Non
 
 async def add_referral(telegram_id: int):
     async with get_session() as session:
-        # Fetch settings to know what reward to give
         res = await session.execute(select(BotSetting).where(BotSetting.key.in_(["referral_reward_type", "referral_reward_amount"])))
         s_dict = {r.key: r.value for r in res.scalars().all()}
-        r_type = s_dict.get("referral_reward_type", "searches")
-        r_amount = int(s_dict.get("referral_reward_amount", "1") or "1")
+        r_type = s_dict.get("referral_reward_type") or "searches"
+        r_amount_val = s_dict.get("referral_reward_amount") or "1"
+        r_amount = int(r_amount_val) if r_amount_val and r_amount_val.isdigit() else 1
 
         result = await session.execute(select(User).where(User.telegram_id == telegram_id))
         user = result.scalar_one_or_none()
         if user:
             user.referral_count += 1
             
-            # If reward is premium days, grant them instantly
             if r_type == "premium":
                 now = datetime.now(timezone.utc)
                 base = user.premium_expiry if user.is_premium and user.premium_expiry and user.premium_expiry > now else now
                 user.is_premium = True
                 user.premium_expiry = base + timedelta(days=r_amount)
-                
-            # If reward is a one-time daily bonus, subtract from their used search count
             elif r_type == "daily_bonus":
                 user.search_count = max(0, user.search_count - r_amount)
                 
@@ -179,23 +174,4 @@ async def reset_search_count(telegram_id: int) -> bool:
         return True
 
 async def get_stats(session: AsyncSession) -> dict:
-    from app.models import Document
-    total_docs = (await session.execute(select(func.count(Document.id)))).scalar() or 0
-    total_users = (await session.execute(select(func.count(User.id)))).scalar() or 0
-    premium_users = (await session.execute(select(func.count(User.id)).where(User.is_premium == True))).scalar() or 0
-    pending_docs = (await session.execute(select(func.count(Document.id)).where(Document.approved == False))).scalar() or 0
-    today = date.today()
-    searches_today = (await session.execute(select(func.count(SearchLog.id)).where(func.date(SearchLog.created_at) == today))).scalar() or 0
-    uploads_today = (await session.execute(select(func.count(Document.id)).where(func.date(Document.created_at) == today))).scalar() or 0
-    return {
-        "total_documents": total_docs, "total_users": total_users, "premium_users": premium_users,
-        "searches_today": searches_today, "pending_documents": pending_docs, "uploads_today": uploads_today,
-    }
-
-async def log_search(session: AsyncSession, user_id: Optional[int], query: str, result_count: int) -> None:
-    try:
-        log = SearchLog(user_id=user_id, query=query, result_count=result_count)
-        session.add(log)
-        await session.flush()
-    except Exception:
-        await session.rollback()
+    from app.models import
