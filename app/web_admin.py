@@ -82,7 +82,7 @@ async def admin_dashboard(request: Request):
         )
         top_referrers = top_ref_res.all()
     return templates.TemplateResponse(request, "dashboard.html", {"stats": stats, "top_referrers": top_referrers, "active": "dashboard"})
-    
+
 @router.get("/settings", dependencies=[Depends(verify_admin)], response_class=templates.TemplateResponse)
 async def admin_settings(request: Request):
     async with get_session() as session:
@@ -100,9 +100,9 @@ async def admin_settings(request: Request):
         shortlink_enabled = await get_setting(session, "shortlink_enabled", "false")
         shortlink_api_url = await get_setting(session, "shortlink_api_url", "")
         shortlink_api_key = await get_setting(session, "shortlink_api_key", "")
-        channels = await get_force_sub_channels(session)
         referral_reward_type = await get_setting(session, "referral_reward_type", "searches")
         referral_reward_amount = await get_setting(session, "referral_reward_amount", "1")
+        channels = await get_force_sub_channels(session)
         
     return templates.TemplateResponse(request, "settings.html", {
         "search_enabled": search_enabled == "true", 
@@ -119,10 +119,10 @@ async def admin_settings(request: Request):
         "shortlink_enabled": shortlink_enabled == "true",
         "shortlink_api_url": shortlink_api_url,
         "shortlink_api_key": shortlink_api_key,
-        "channels": channels,
-        "active": "settings"
         "referral_reward_type": referral_reward_type,
         "referral_reward_amount": referral_reward_amount,
+        "channels": channels,
+        "active": "settings"
     })
 
 @router.post("/settings", dependencies=[Depends(verify_admin)])
@@ -141,7 +141,9 @@ async def admin_settings_post(
     prem_search_limit: str = Form("100"),
     shortlink_enabled: str = Form("off"),
     shortlink_api_url: str = Form(""),
-    shortlink_api_key: str = Form("")
+    shortlink_api_key: str = Form(""),
+    referral_reward_type: str = Form("searches"),
+    referral_reward_amount: str = Form("1")
 ):
     try:
         async with get_session() as session:
@@ -165,6 +167,8 @@ async def admin_settings_post(
             await save_setting("shortlink_enabled", "true" if shortlink_enabled == "on" else "false")
             await save_setting("shortlink_api_url", shortlink_api_url)
             await save_setting("shortlink_api_key", shortlink_api_key)
+            await save_setting("referral_reward_type", referral_reward_type)
+            await save_setting("referral_reward_amount", referral_reward_amount if referral_reward_amount.isdigit() else "1")
                 
         return RedirectResponse(url="/admin/settings", status_code=303)
     except Exception as e:
