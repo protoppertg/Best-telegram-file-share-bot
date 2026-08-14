@@ -134,9 +134,7 @@ def admin_doc_actions_kb(doc_id: int, approved: bool):
 async def cmd_admin(message: Message, state: FSMContext):
     await state.clear()
     if not is_admin(message.from_user.id):
-        # If it denies you, it will tell you exactly what ID it sees and what env var it loaded
-        raw_env = os.environ.get("ADMIN_IDS", "VARIABLE DOES NOT EXIST")
-        await message.answer(f"❌ Access Denied.\n\nYour Telegram ID: {message.from_user.id}\nLoaded Admin List: {settings.admin_ids_list}\nRaw Env Variable: {raw_env}")
+        await message.answer("❌ You do not have permission to use this command.")
         return
         
     await message.answer("🔧 <b>Admin Panel</b>\n\nWelcome to the control center. Select an option below:", reply_markup=admin_menu_kb())
