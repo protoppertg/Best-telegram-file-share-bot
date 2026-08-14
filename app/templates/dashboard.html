@@ -36,11 +36,59 @@
     </div>
 </div>
 
-<div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-    <h2 class="text-xl font-bold mb-4 text-gray-900">Quick Actions</h2>
-    <div class="flex space-x-4">
-        <a href="/admin/documents" class="bg-blue-500 text-white px-4 py-2 rounded-xl hover:bg-blue-600 transition shadow-sm">Manage Documents</a>
-        <a href="/admin/users" class="bg-gray-100 text-gray-700 px-4 py-2 rounded-xl hover:bg-gray-200 transition">Manage Users</a>
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+    <!-- Referral Chart -->
+    <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+        <h2 class="text-xl font-bold mb-4 text-gray-900">Top Referrers</h2>
+        {% if top_referrers %}
+        <div style="height: 300px;"><canvas id="referralChart"></canvas></div>
+        {% else %}
+        <div class="flex items-center justify-center h-[300px] text-gray-400">
+            <p>No referrals yet. Share your bot link to get started!</p>
+        </div>
+        {% endif %}
+    </div>
+    <!-- Quick Actions -->
+    <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+        <h2 class="text-xl font-bold mb-4 text-gray-900">Quick Actions</h2>
+        <div class="flex flex-col space-y-3">
+            <a href="/admin/documents" class="bg-blue-500 text-white px-4 py-3 rounded-xl hover:bg-blue-600 transition shadow-sm text-center">Manage Documents</a>
+            <a href="/admin/users" class="bg-gray-100 text-gray-700 px-4 py-3 rounded-xl hover:bg-gray-200 transition text-center">Manage Users</a>
+            <a href="/admin/broadcast" class="bg-purple-500 text-white px-4 py-3 rounded-xl hover:bg-purple-600 transition shadow-sm text-center">Send Broadcast</a>
+            <a href="/admin/settings" class="bg-gray-800 text-white px-4 py-3 rounded-xl hover:bg-gray-900 transition shadow-sm text-center">Bot Settings</a>
+        </div>
     </div>
 </div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+    const ctx = document.getElementById('referralChart');
+    if (ctx) {
+        new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: [{% for ref in top_referrers %}"@{{ ref[0] or 'Unknown' }}", {% endfor %}],
+                datasets: [{
+                    label: 'Total Referrals',
+                    data: [{% for ref in top_referrers %}{{ ref[1] }}, {% endfor %}],
+                    backgroundColor: 'rgba(59, 130, 246, 0.5)',
+                    borderColor: 'rgba(59, 130, 246, 1)',
+                    borderWidth: 1,
+                    borderRadius: 8
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: { beginAtZero: true, grid: { color: 'rgba(0,0,0,0.05)' } },
+                    x: { grid: { display: false } }
+                },
+                plugins: {
+                    legend: { display: false }
+                }
+            }
+        });
+    }
+</script>
 {% endblock %}
