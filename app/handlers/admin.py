@@ -36,8 +36,9 @@ class DirectMessageStates(StatesGroup):
     waiting_message = State()
 
 def is_admin(user_id: int) -> bool:
-    raw_admin_ids = os.environ.get("ADMIN_IDS", "")
-    admin_ids = [int(x.strip()) for x in raw_admin_ids.split(",") if x.strip().isdigit()]
+    # Read directly from OS environment to bypass all Pydantic/Render caching
+    raw_env = os.environ.get("ADMIN_IDS", "")
+    admin_ids = [int(x.strip()) for x in raw_env.split(",") if x.strip().isdigit()]
     return user_id in admin_ids
 
 async def get_force_sub_channels(session) -> list[dict]:
@@ -133,7 +134,9 @@ def admin_doc_actions_kb(doc_id: int, approved: bool):
 async def cmd_admin(message: Message, state: FSMContext):
     await state.clear()
     if not is_admin(message.from_user.id):
-        await message.answer("❌ You do not have permission to use this command.")
+        # If it denies you, it will tell you exactly what ID it sees and what env var it loaded
+        raw_env = os.environ.get("ADMIN_IDS", "VARIABLE DOES NOT EXIST")
+        await message.answer(f"❌ Access Denied.\n\nYour Telegram ID: {message.from_user.id}\nLoaded Admin List: {settings.admin_ids_list}\nRaw Env Variable: {raw_env}")
         return
         
     await message.answer("🔧 <b>Admin Panel</b>\n\nWelcome to the control center. Select an option below:", reply_markup=admin_menu_kb())
