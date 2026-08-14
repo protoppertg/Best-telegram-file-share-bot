@@ -174,4 +174,23 @@ async def reset_search_count(telegram_id: int) -> bool:
         return True
 
 async def get_stats(session: AsyncSession) -> dict:
-    from app.models import
+    from app.models import Document
+    total_docs = (await session.execute(select(func.count(Document.id)))).scalar() or 0
+    total_users = (await session.execute(select(func.count(User.id)))).scalar() or 0
+    premium_users = (await session.execute(select(func.count(User.id)).where(User.is_premium == True))).scalar() or 0
+    pending_docs = (await session.execute(select(func.count(Document.id)).where(Document.approved == False))).scalar() or 0
+    today = date.today()
+    searches_today = (await session.execute(select(func.count(SearchLog.id)).where(func.date(SearchLog.created_at) == today))).scalar() or 0
+    uploads_today = (await session.execute(select(func.count(Document.id)).where(func.date(Document.created_at) == today))).scalar() or 0
+    return {
+        "total_documents": total_docs, "total_users": total_users, "premium_users": premium_users,
+        "searches_today": searches_today, "pending_documents": pending_docs, "uploads_today": uploads_today,
+    }
+
+async def log_search(session: AsyncSession, user_id: Optional[int], query: str, result_count: int) -> None:
+    try:
+        log = SearchLog(user_id=user_id, query=query, result_count=result_count)
+        session.add(log)
+        await session.flush()
+    except Exception:
+        await session.rollback()
