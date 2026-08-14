@@ -46,8 +46,27 @@ async def _is_premium_enabled() -> bool:
 
 
 @router.message(Command("start"))
-async def cmd_start(message: Message, state: FSMContext):
+async def cmd_start(message: Message, state: FSMContext, command: CommandObject):
     await state.clear()
+    
+    # Handle Referral Deep Link
+    if command.args and command.args.startswith("ref_"):
+        ref_id_str = command.args.replace("ref_", "")
+        if ref_id_str.isdigit():
+            ref_id = int(ref_id_str)
+            # Ensure user doesn't refer themselves
+            if ref_id != message.from_user.id:
+                async with get_session() as session:
+                    # Check if the current user is new
+                    existing_user = await session.execute(select(User).where(User.telegram_id == message.from_user.id))
+                    if not existing_user.scalar_one_or_none():
+                        # Credit the referrer
+                        await user_service.add_referral(ref_id)
+                        try:
+                            await message.bot.send_message(ref_id, "🎉 <b>New Referral!</b>\nSomeone joined using your link. You earned a reward!")
+                        except Exception:
+                            pass
+
     async with get_session() as session:
         text_setting = await session.execute(select(BotSetting).where(BotSetting.key == "start_text"))
         text_setting = text_setting.scalar_one_or_none()
@@ -60,16 +79,47 @@ async def cmd_start(message: Message, state: FSMContext):
         "🛠 <b>How to use me:</b>\n"
         "┣👉 <b>Search:</b> Type keywords or use advanced filters.\n"
         "┣👉 <b>Upload:</b> Send a PDF to support the community.\n"
+        "┣👉 <b>Referral:</b> Invite friends to earn extra searches!\n"
         "┗👉 <b>Premium:</b> Unlock unlimited searches & ad-free downloads.\n\n"
-        "💡 <b>Advanced Search Tip:</b>\n"
-        "You can filter your search using tags!\n"
-        "<code>physics subject:Math class:10 year:2023</code>\n\n"
         "<i>Ready to dive in? Just type a keyword below!</i>"
     )
     text = text_setting.value if text_setting and text_setting.value else default_text
     
     show_prem = await _is_premium_enabled()
     await message.answer(text, reply_markup=main_menu_kb(show_premium=show_prem))
+
+
+@router.message(F.text == "🤝 Referral")
+@router.message(Command("referral"))
+async def cmd_referral(message: Message, db_user: User | None = None):
+    if not db_user:
+        await message.answer("Please send /start first to register.")
+        return
+        
+    bot_info = await message.bot.get_me()
+    ref_link = f"https://t.me/{bot_info.username}?start=ref_{db_user.telegram_id}"
+    
+    async with get_session() as session:
+        res = await session.execute(select(BotSetting).where(BotSetting.key.in_(["referral_reward_type", "referral_reward_amount"])))
+        s_dict = {r.key: r.value for r in res.scalars().all()}
+        r_type = s_dict.get("referral_reward_type", "searches")
+        r_amount = int(s_dict.get("referral_reward_amount", "1") or "1")
+
+    if r_type == "premium":
+        reward_text = f"<b>{r_amount} Days of Premium</b>"
+    elif r_type == "daily_bonus":
+        reward_text = f"<b>+{r_amount} Bonus Searches Today</b>"
+    else:
+        reward_text = f"<b>+{r_amount} Permanent Daily Searches</b>"
+
+    text = (
+        "🤝 <b>Referral Program</b>\n\n"
+        f"Invite your friends using your link and earn rewards!\n"
+        f"Reward per referral: {reward_text}\n\n"
+        f"Your Referrals: <b>{db_user.referral_count}</b>\n\n"
+        f"🔗 <b>Your Link:</b>\n<code>{ref_link}</code>"
+    )
+    await message.answer(text)
 
 
 @router.message(F.text == "❓ Help")
