@@ -44,21 +44,30 @@ async def reset_daily_counts_if_needed(session: AsyncSession, user: User) -> boo
 
 async def get_user_search_limit(user: User) -> int:
     async with get_session() as session:
-        prem_enabled = await session.execute(select(BotSetting).where(BotSetting.key == "premium_enabled"))
-        prem_enabled = prem_enabled.scalar_one_or_none()
-        if prem_enabled and prem_enabled.value == "false":
-            limit_setting = await session.execute(select(BotSetting).where(BotSetting.key == "free_search_limit"))
-            limit_setting = limit_setting.scalar_one_or_none()
-            return int(limit_setting.value) if limit_setting and limit_setting.value.isdigit() else settings.FREE_SEARCH_LIMIT
+        # OPTIMIZED: Fetch all settings in one single DB query
+        res = await session.execute(select(BotSetting).where(BotSetting.key.in_([
+            "premium_enabled", "free_search_limit", "premium_search_limit", "referral_reward_type", "referral_reward_amount"
+        ])))
+        settings_dict = {row.key: row.value for row in res.scalars().all()}
+
+        prem_enabled = settings_dict.get("premium_enabled", "true") == "true"
+        r_type = settings_dict.get("referral_reward_type", "searches")
+        r_amount_val = settings_dict.get("referral_reward_amount", "0")
+        r_amount = int(r_amount_val) if r_amount_val.isdigit() else 0
+        
+        # Calculate referral bonus (only if reward type is permanent searches)
+        ref_bonus = (r_amount * user.referral_count) if r_type == "searches" else 0
+
+        if not prem_enabled:
+            base_val = settings_dict.get("free_search_limit", str(settings.FREE_SEARCH_LIMIT))
+            return int(base_val) + ref_bonus
         
         if user.is_premium:
-            limit_setting = await session.execute(select(BotSetting).where(BotSetting.key == "premium_search_limit"))
-            limit_setting = limit_setting.scalar_one_or_none()
-            return int(limit_setting.value) if limit_setting and limit_setting.value.isdigit() else settings.PREMIUM_SEARCH_LIMIT
+            base_val = settings_dict.get("premium_search_limit", str(settings.PREMIUM_SEARCH_LIMIT))
         else:
-            limit_setting = await session.execute(select(BotSetting).where(BotSetting.key == "free_search_limit"))
-            limit_setting = limit_setting.scalar_one_or_none()
-            return int(limit_setting.value) if limit_setting and limit_setting.value.isdigit() else settings.FREE_SEARCH_LIMIT
+            base_val = settings_dict.get("free_search_limit", str(settings.FREE_SEARCH_LIMIT))
+        
+        return int(base_val) + ref_bonus
 
 async def get_user_upload_limit(user: User) -> int:
     return settings.PREMIUM_UPLOAD_LIMIT if user.is_premium else settings.FREE_UPLOAD_LIMIT
@@ -90,6 +99,32 @@ async def increment_upload_count(session: AsyncSession, telegram_id: int) -> Non
     except Exception as e:
         logger.error("increment_upload_error", error=str(e))
         await session.rollback()
+
+async def add_referral(telegram_id: int):
+    async with get_session() as session:
+        # Fetch settings to know what reward to give
+        res = await session.execute(select(BotSetting).where(BotSetting.key.in_(["referral_reward_type", "referral_reward_amount"])))
+        s_dict = {r.key: r.value for r in res.scalars().all()}
+        r_type = s_dict.get("referral_reward_type", "searches")
+        r_amount = int(s_dict.get("referral_reward_amount", "1") or "1")
+
+        result = await session.execute(select(User).where(User.telegram_id == telegram_id))
+        user = result.scalar_one_or_none()
+        if user:
+            user.referral_count += 1
+            
+            # If reward is premium days, grant them instantly
+            if r_type == "premium":
+                now = datetime.now(timezone.utc)
+                base = user.premium_expiry if user.is_premium and user.premium_expiry and user.premium_expiry > now else now
+                user.is_premium = True
+                user.premium_expiry = base + timedelta(days=r_amount)
+                
+            # If reward is a one-time daily bonus, subtract from their used search count
+            elif r_type == "daily_bonus":
+                user.search_count = max(0, user.search_count - r_amount)
+                
+            await session.flush()
 
 async def activate_premium(telegram_id: int, duration_days: int) -> bool:
     async with get_session() as session:
