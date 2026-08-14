@@ -23,6 +23,7 @@ class User(Base):
     is_banned: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     search_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     upload_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    referral_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     last_reset_date: Mapped[date] = mapped_column(Date, default=func.current_date(), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
