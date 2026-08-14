@@ -101,6 +101,8 @@ async def admin_settings(request: Request):
         shortlink_api_url = await get_setting(session, "shortlink_api_url", "")
         shortlink_api_key = await get_setting(session, "shortlink_api_key", "")
         channels = await get_force_sub_channels(session)
+        referral_reward_type = await get_setting(session, "referral_reward_type", "searches")
+        referral_reward_amount = await get_setting(session, "referral_reward_amount", "1")
         
     return templates.TemplateResponse(request, "settings.html", {
         "search_enabled": search_enabled == "true", 
