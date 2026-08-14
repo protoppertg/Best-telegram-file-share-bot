@@ -121,6 +121,8 @@ async def admin_settings(request: Request):
         "shortlink_api_key": shortlink_api_key,
         "channels": channels,
         "active": "settings"
+        "referral_reward_type": referral_reward_type,
+        "referral_reward_amount": referral_reward_amount,
     })
 
 @router.post("/settings", dependencies=[Depends(verify_admin)])
