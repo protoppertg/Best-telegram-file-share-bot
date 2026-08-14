@@ -6,6 +6,7 @@
 </div>
 
 <div class="space-y-6">
+    <!-- Bot Texts -->
     <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
         <h2 class="text-xl font-bold mb-4 text-gray-900">Bot Texts</h2>
         <form method="POST" action="/admin/settings" class="space-y-6">
@@ -71,6 +72,21 @@
                 </div>
             </div>
 
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div class="p-3 bg-gray-50 rounded-xl">
+                    <label class="block text-gray-700 text-sm font-bold mb-1">Referral Reward Type</label>
+                    <select name="referral_reward_type" class="w-full bg-transparent border-none focus:outline-none text-sm">
+                        <option value="searches" {% if referral_reward_type == 'searches' %}selected{% endif %}>Permanent Extra Daily Searches</option>
+                        <option value="daily_bonus" {% if referral_reward_type == 'daily_bonus' %}selected{% endif %}>One-Time Bonus Searches Today</option>
+                        <option value="premium" {% if referral_reward_type == 'premium' %}selected{% endif %}>Premium Days</option>
+                    </select>
+                </div>
+                <div class="p-3 bg-gray-50 rounded-xl">
+                    <label class="block text-gray-700 text-sm font-bold mb-1">Referral Reward Amount</label>
+                    <input type="number" name="referral_reward_amount" value="{{ referral_reward_amount }}" class="w-full bg-transparent border-none focus:outline-none text-sm">
+                </div>
+            </div>
+
             <div class="p-3 bg-gray-50 rounded-xl">
                 <label class="block text-gray-700 text-sm font-bold mb-1">Auto-Delete Delay (sec)</label>
                 <input type="number" name="auto_delete_seconds" value="{{ ad_seconds }}" class="w-full bg-transparent border-none focus:outline-none text-sm">
@@ -106,6 +122,7 @@
         </form>
     </div>
 
+    <!-- Force Sub -->
     <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
         <h2 class="text-xl font-bold mb-4 text-gray-900">Force Sub Channels</h2>
         {% if channels %}
