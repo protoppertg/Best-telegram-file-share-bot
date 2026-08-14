@@ -39,6 +39,7 @@ async def init_db():
         
         alters = [
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_banned BOOLEAN DEFAULT false",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_count INTEGER DEFAULT 0",
             "ALTER TABLE documents ADD COLUMN IF NOT EXISTS class_name VARCHAR(100)",
             "ALTER TABLE documents ADD COLUMN IF NOT EXISTS keywords TEXT[]",
             "ALTER TABLE bot_settings ADD COLUMN IF NOT EXISTS value TEXT"
