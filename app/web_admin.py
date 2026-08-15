@@ -290,20 +290,44 @@ async def admin_users(request: Request, page: int = 1, q: Optional[str] = None):
     try:
         async with get_session() as session:
             if q: 
+                # Search by Telegram ID (if number) OR Name OR Username
                 if q.isdigit():
-                    stmt = select(User).where((User.username.ilike(f"%{q}%")) | (User.telegram_id == int(q)))
-                    count_stmt = select(func.count(User.id)).where((User.username.ilike(f"%{q}%")) | (User.telegram_id == int(q)))
+                    stmt = select(User).where(
+                        (User.username.ilike(f"%{q}%")) | 
+                        (User.telegram_id == int(q)) | 
+                        (User.first_name.ilike(f"%{q}%")) | 
+                        (User.last_name.ilike(f"%{q}%"))
+                    )
+                    count_stmt = select(func.count(User.id)).where(
+                        (User.username.ilike(f"%{q}%")) | 
+                        (User.telegram_id == int(q)) | 
+                        (User.first_name.ilike(f"%{q}%")) | 
+                        (User.last_name.ilike(f"%{q}%"))
+                    )
                 else:
-                    stmt = select(User).where(User.username.ilike(f"%{q}%"))
-                    count_stmt = select(func.count(User.id)).where(User.username.ilike(f"%{q}%"))
+                    stmt = select(User).where(
+                        (User.username.ilike(f"%{q}%")) | 
+                        (User.first_name.ilike(f"%{q}%")) | 
+                        (User.last_name.ilike(f"%{q}%"))
+                    )
+                    count_stmt = select(func.count(User.id)).where(
+                        (User.username.ilike(f"%{q}%")) | 
+                        (User.first_name.ilike(f"%{q}%")) | 
+                        (User.last_name.ilike(f"%{q}%"))
+                    )
             else: 
                 stmt = select(User)
                 count_stmt = select(func.count(User.id))
+                
             result = await session.execute(stmt.order_by(User.created_at.desc()).offset((page - 1) * per_page).limit(per_page))
             users = result.scalars().all()
             total = (await session.execute(count_stmt)).scalar() or 0
+            
         total_pages = max(1, (total + per_page - 1) // per_page)
         return templates.TemplateResponse(request, "users.html", {"users": users, "page": page, "total_pages": total_pages, "q": q, "active": "users"})
+    except Exception as e:
+        logger.error("admin_users_error", error=str(e), exc_info=True)
+        return templates.TemplateResponse(request, "users.html", {"users": [], "page": 1, "total_pages": 1, "q": q, "active": "users"})
     except Exception:
         await repair_database()
         return templates.TemplateResponse(request, "users.html", {"users": [], "page": 1, "total_pages": 1, "q": q, "active": "users"})
