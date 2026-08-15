@@ -21,25 +21,43 @@
     <aside class="w-64 glass border-r border-gray-200/50 min-h-screen flex flex-col fixed">
         <div class="p-6 text-xl font-bold text-gray-900 border-b border-gray-200/50">📚 PrepCore</div>
         <nav class="flex-1 p-4 space-y-1">
+            {% set perms = request.state.perms %}
+            
+            {% if 'stats' in perms or 'admins' in perms %}
             <a href="/admin/" class="flex items-center space-x-3 py-2.5 px-4 rounded-xl transition {{ 'bg-blue-500 text-white shadow-sm' if active == 'dashboard' else 'text-gray-600 hover:bg-gray-200/50' }}">
                 <i class="fas fa-tachometer-alt w-5"></i> <span>Dashboard</span>
             </a>
+            {% endif %}
+            
+            {% if 'documents' in perms or 'admins' in perms %}
             <a href="/admin/documents" class="flex items-center space-x-3 py-2.5 px-4 rounded-xl transition {{ 'bg-blue-500 text-white shadow-sm' if active == 'documents' else 'text-gray-600 hover:bg-gray-200/50' }}">
                 <i class="fas fa-file-pdf w-5"></i> <span>Documents</span>
             </a>
+            {% endif %}
+            
+            {% if 'users' in perms or 'admins' in perms %}
             <a href="/admin/users" class="flex items-center space-x-3 py-2.5 px-4 rounded-xl transition {{ 'bg-blue-500 text-white shadow-sm' if active == 'users' else 'text-gray-600 hover:bg-gray-200/50' }}">
                 <i class="fas fa-users w-5"></i> <span>Users</span>
             </a>
+            {% endif %}
+            
+            {% if 'broadcast' in perms or 'admins' in perms %}
             <a href="/admin/broadcast" class="flex items-center space-x-3 py-2.5 px-4 rounded-xl transition {{ 'bg-blue-500 text-white shadow-sm' if active == 'broadcast' else 'text-gray-600 hover:bg-gray-200/50' }}">
                 <i class="fas fa-bullhorn w-5"></i> <span>Broadcast</span>
             </a>
-            <!-- NEW ADMINS LINK -->
+            {% endif %}
+            
+            {% if 'admins' in perms %}
             <a href="/admin/admins" class="flex items-center space-x-3 py-2.5 px-4 rounded-xl transition {{ 'bg-blue-500 text-white shadow-sm' if active == 'admins' else 'text-gray-600 hover:bg-gray-200/50' }}">
                 <i class="fas fa-user-shield w-5"></i> <span>Admins</span>
             </a>
+            {% endif %}
+            
+            {% if 'forcesub' in perms or 'admins' in perms %}
             <a href="/admin/settings" class="flex items-center space-x-3 py-2.5 px-4 rounded-xl transition {{ 'bg-blue-500 text-white shadow-sm' if active == 'settings' else 'text-gray-600 hover:bg-gray-200/50' }}">
                 <i class="fas fa-cog w-5"></i> <span>Settings</span>
             </a>
+            {% endif %}
         </nav>
         <div class="p-4 border-t border-gray-200/50">
             <a href="/admin/logout" class="flex items-center space-x-3 py-2.5 px-4 rounded-xl text-red-500 hover:bg-red-50 transition">
