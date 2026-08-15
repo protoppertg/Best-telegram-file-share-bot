@@ -29,6 +29,14 @@ from app.utils.validators import is_valid_search_query, parse_keywords, parse_ye
 
 router = Router()
 
+# Premium Animated Emoji IDs
+EMOJI_FIRE = "5377636793787918554"
+EMOJI_ROCKET = "5377636793939500266"
+EMOJI_STAR = "5377596903241758841"
+EMOJI_PARTY = "5376345424831346771"
+EMOJI_BOOKS = "5376345424831346771"
+EMOJI_GIFT = "5376345424831346771"
+EMOJI_HANDSHAKE = "5376345424831346771"
 
 class UploadStates(StatesGroup):
     waiting_file_name = State()
@@ -38,33 +46,27 @@ class UploadStates(StatesGroup):
     waiting_year = State()
     waiting_keywords = State()
 
-
 async def _is_premium_enabled() -> bool:
     async with get_session() as session:
         prem_enabled = await session.execute(select(BotSetting).where(BotSetting.key == "premium_enabled"))
         prem_enabled = prem_enabled.scalar_one_or_none()
         return not (prem_enabled and prem_enabled.value == "false")
 
-
 @router.message(Command("start"))
 async def cmd_start(message: Message, state: FSMContext, command: CommandObject):
     await state.clear()
     
-    # Handle Referral Deep Link
     if command.args and command.args.startswith("ref_"):
         ref_id_str = command.args.replace("ref_", "")
         if ref_id_str.isdigit():
             ref_id = int(ref_id_str)
-            # Ensure user doesn't refer themselves
             if ref_id != message.from_user.id:
                 async with get_session() as session:
-                    # Check if the current user is new
                     existing_user = await session.execute(select(User).where(User.telegram_id == message.from_user.id))
                     if not existing_user.scalar_one_or_none():
-                        # Credit the referrer
                         await user_service.add_referral(ref_id)
                         try:
-                            await message.bot.send_message(ref_id, "🎉 <b>New Referral!</b>\nSomeone joined using your link. You earned a reward!")
+                            await message.bot.send_message(ref_id, f'<tg-emoji emoji-id="{EMOJI_PARTY}">🎉</tg-emoji> <b>New Referral!</b>\nSomeone joined using your link. You earned a reward!')
                         except Exception:
                             pass
 
@@ -73,22 +75,21 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
         text_setting = text_setting.scalar_one_or_none()
         
     default_text = (
-        "✨ <b>Welcome to PrepCore!</b> ✨\n"
+        f'<tg-emoji emoji-id="{EMOJI_FIRE}">✨</tg-emoji> <b>Welcome to PrepCore!</b> <tg-emoji emoji-id="{EMOJI_FIRE}">✨</tg-emoji>\n'
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "📚 Your ultimate library for study materials.\n"
+        f'<tg-emoji emoji-id="{EMOJI_BOOKS}">📚</tg-emoji> Your ultimate library for study materials.\n'
         "Find notes, PYQs, and books in seconds!\n\n"
-        "🛠 <b>How to use me:</b>\n"
+        f'<tg-emoji emoji-id="{EMOJI_ROCKET}">🛠</tg-emoji> <b>How to use me:</b>\n'
         "┣👉 <b>Search:</b> Type keywords or use advanced filters.\n"
         "┣👉 <b>Upload:</b> Send a PDF to support the community.\n"
         "┣👉 <b>Referral:</b> Invite friends to earn extra searches!\n"
         "┗👉 <b>Premium:</b> Unlock unlimited searches & ad-free downloads.\n\n"
-        "<i>Ready to dive in? Just type a keyword below!</i>"
+        f'<i>Ready to dive in? Just type a keyword below!</i> <tg-emoji emoji-id="{EMOJI_ROCKET}">🚀</tg-emoji>'
     )
     text = text_setting.value if text_setting and text_setting.value else default_text
     
     show_prem = await _is_premium_enabled()
     await message.answer(text, reply_markup=main_menu_kb(show_premium=show_prem))
-
 
 @router.message(F.text == "🤝 Referral")
 @router.message(Command("referral"))
@@ -107,18 +108,17 @@ async def cmd_referral(message: Message, db_user: User | None = None):
         r_amount_val = s_dict.get("referral_reward_amount") or "1"
         r_amount = int(r_amount_val) if r_amount_val and r_amount_val.isdigit() else 1
 
-    # Build the reward text based on admin settings
     if r_type == "premium":
-        reward_text = f"⭐ <b>{r_amount} Day(s) of Premium</b>\n🚀 Unlock unlimited searches & ad-free downloads!"
+        reward_text = f'<tg-emoji emoji-id="{EMOJI_STAR}">⭐</tg-emoji> <b>{r_amount} Day(s) of Premium</b>\n🚀 Unlock unlimited searches & ad-free downloads!'
     elif r_type == "daily_bonus":
-        reward_text = f"⚡ <b>+{r_amount} Bonus Searches Today</b>\n🔢 Get extra searches instantly for today!"
+        reward_text = f'<tg-emoji emoji-id="{EMOJI_FIRE}">⚡</tg-emoji> <b>+{r_amount} Bonus Searches Today</b>\n🔢 Get extra searches instantly for today!'
     else:
-        reward_text = f"🔍 <b>+{r_amount} Permanent Daily Searches</b>\n📈 Permanently increase your daily search limit!"
+        reward_text = f'<tg-emoji emoji-id="{EMOJI_FIRE}">🔍</tg-emoji> <b>+{r_amount} Permanent Daily Searches</b>\n📈 Permanently increase your daily search limit!'
 
     text = (
-        "🤝 <b>Refer & Earn Program</b>\n"
+        f'<tg-emoji emoji-id="{EMOJI_HANDSHAKE}">🤝</tg-emoji> <b>Refer & Earn Program</b>\n'
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "Invite your friends to PrepCore and earn amazing rewards for every successful referral! 🎁\n\n"
+        f'Invite your friends to PrepCore and earn amazing rewards for every successful referral! <tg-emoji emoji-id="{EMOJI_GIFT}">🎁</tg-emoji>\n\n'
         f"🎯 <b>Reward Per Referral:</b>\n{reward_text}\n\n"
         f"📊 <b>Your Statistics:</b>\n"
         f"👥 Total Referrals: <b>{db_user.referral_count}</b>\n\n"
@@ -127,29 +127,26 @@ async def cmd_referral(message: Message, db_user: User | None = None):
         "<i>👉 Tap the link above to copy it, then share it with your friends. When they join, your reward is added automatically!</i>"
     )
     
-    # Add a quick share button
     kb = InlineKeyboardBuilder()
     share_text = f"📚 Join PrepCore! The ultimate library for study materials. Search for notes, PYQs, and books instantly!"
     kb.button(text="📤 Share Link", url=f"https://t.me/share/url?url={ref_link}&text={share_text}")
     
     await message.answer(text, reply_markup=kb.as_markup())
 
-
 @router.message(F.text == "❓ Help")
 @router.message(Command("help"))
 async def cmd_help(message: Message):
     text = (
-        "📖 <b>Help & Guide</b>\n\n"
-        "🔍 <b>Basic Search:</b>\n"
+        f'<tg-emoji emoji-id="{EMOJI_BOOKS}">📖</tg-emoji> <b>Help & Guide</b>\n\n'
+        f'<tg-emoji emoji-id="{EMOJI_FIRE}">🔍</tg-emoji> <b>Basic Search:</b>\n'
         "Just type what you're looking for (e.g., <code>physics notes</code>).\n\n"
-        "🚀 <b>Advanced Search:</b>\n"
+        f'<tg-emoji emoji-id="{EMOJI_ROCKET}">🚀</tg-emoji> <b>Advanced Search:</b>\n'
         "Use filters to narrow down results instantly!\n"
         "<code>math subject:Physics class:Class 10 year:2023</code>\n\n"
         "📤 <b>Upload:</b> Send a PDF to support the library.\n"
-        "🎟️ <b>Premium:</b> Get unlimited searches and ad-free downloads."
+        f'<tg-emoji emoji-id="{EMOJI_STAR}">🎟️</tg-emoji> <b>Premium:</b> Get unlimited searches and ad-free downloads.'
     )
     await message.answer(text)
-
 
 @router.message(Command("about"))
 async def cmd_about(message: Message):
@@ -166,7 +163,6 @@ async def cmd_about(message: Message):
     text = text_setting.value if text_setting and text_setting.value else default_text
     await message.answer(text)
 
-
 @router.message(Command("usage"))
 async def cmd_usage(message: Message, db_user: User | None = None):
     if not db_user:
@@ -181,7 +177,6 @@ async def cmd_usage(message: Message, db_user: User | None = None):
         "Limits reset daily."
     )
     await message.answer(text)
-
 
 @router.message(F.text == "🎟️ Premium")
 @router.message(Command("premium"))
@@ -214,11 +209,9 @@ async def cmd_premium(message: Message, db_user: User | None = None):
     text = text_setting.value if text_setting and text_setting.value else default_text
     await message.answer(text)
 
-
 @router.message(F.text == "🔍 Search")
 async def btn_search(message: Message):
     await message.answer("🔍 Please type your search query now (e.g., <code>physics notes</code>):")
-
 
 @router.message(Command("search"))
 async def cmd_search(message: Message, command: CommandObject, db_user: User | None = None):
@@ -227,7 +220,6 @@ async def cmd_search(message: Message, command: CommandObject, db_user: User | N
         await message.answer("🔍 Please provide a search query.\nExample: <code>/search physics notes</code>")
         return
     await _perform_search(message, query, db_user, page=1)
-
 
 @router.message(StateFilter(None), F.text & ~F.text.startswith("/"))
 async def text_search(message: Message, db_user: User | None = None):
@@ -238,7 +230,6 @@ async def text_search(message: Message, db_user: User | None = None):
         await message.answer("🔍 Your query is too short. Please enter at least 2 characters.")
         return
     await _perform_search(message, query, db_user, page=1)
-
 
 def _parse_advanced_search(raw_query: str) -> tuple[str, Optional[str], Optional[str], Optional[int]]:
     subject = None
@@ -265,7 +256,6 @@ def _parse_advanced_search(raw_query: str) -> tuple[str, Optional[str], Optional
         clean_query = " "
 
     return clean_query, subject, class_name, year
-
 
 async def _perform_search(message: Message, query: str, db_user: User | None, page: int) -> None:
     async with get_session() as session:
@@ -312,11 +302,9 @@ async def _perform_search(message: Message, query: str, db_user: User | None, pa
     text = f"🔍 <b>Search: {escape(sanitise_text(query, 100))}</b>\n📊 Found <b>{total}</b> result(s) — Page {page}/{total_pages}\n\nTap a file to download:"
     await message.answer(text, reply_markup=search_results_keyboard(results, query_key, page, total_pages))
 
-
 @router.message(F.text == "📤 Upload")
 async def btn_upload(message: Message):
     await message.answer("📤 Please send the PDF file you want to upload to the library.")
-
 
 @router.message(F.document, StateFilter(None))
 async def handle_document_upload(message: Message, state: FSMContext, db_user: User | None = None):
@@ -337,7 +325,6 @@ async def handle_document_upload(message: Message, state: FSMContext, db_user: U
     await state.set_state(UploadStates.waiting_file_name)
     await message.answer(f"📤 <b>Upload Started</b>\n\nFile: <code>{escape(sanitise_text(original_name, 100))}</code>\n\nEnter a <b>file name</b> (or send /skip to use the original name):")
 
-
 @router.message(UploadStates.waiting_file_name, F.text)
 async def upload_file_name(message: Message, state: FSMContext):
     if message.text.strip().lower() == "/skip":
@@ -349,7 +336,6 @@ async def upload_file_name(message: Message, state: FSMContext):
     await state.set_state(UploadStates.waiting_subject)
     await message.answer("Enter the <b>subject</b> (or /skip):")
 
-
 @router.message(UploadStates.waiting_subject, F.text)
 async def upload_subject(message: Message, state: FSMContext):
     subject = None
@@ -358,14 +344,12 @@ async def upload_subject(message: Message, state: FSMContext):
     await state.set_state(UploadStates.waiting_category)
     await message.answer("Select a <b>category</b>:", reply_markup=category_keyboard())
 
-
 @router.message(UploadStates.waiting_category, F.text)
 async def upload_category_text(message: Message, state: FSMContext):
     if message.text and not message.text.startswith("/"):
         await state.update_data(category=sanitise_text(message.text, 100))
         await state.set_state(UploadStates.waiting_class)
         await message.answer("Enter the <b>Class</b> (e.g., Class 10, B.Sc 1st Year) or /skip:")
-
 
 @router.callback_query(F.data.startswith("upload_cat:"), UploadStates.waiting_category)
 async def upload_category_callback(callback, state: FSMContext):
@@ -376,7 +360,6 @@ async def upload_category_callback(callback, state: FSMContext):
     await callback.message.answer("Enter the <b>Class</b> (e.g., Class 10, B.Sc 1st Year) or /skip:")
     await callback.answer()
 
-
 @router.message(UploadStates.waiting_class, F.text)
 async def upload_class_name(message: Message, state: FSMContext):
     class_name = None
@@ -384,7 +367,6 @@ async def upload_class_name(message: Message, state: FSMContext):
     await state.update_data(class_name=class_name)
     await state.set_state(UploadStates.waiting_year)
     await message.answer("Enter the <b>year</b> (e.g. 2023) or /skip:")
-
 
 @router.message(UploadStates.waiting_year, F.text)
 async def upload_year(message: Message, state: FSMContext):
@@ -397,7 +379,6 @@ async def upload_year(message: Message, state: FSMContext):
     await state.update_data(year=year)
     await state.set_state(UploadStates.waiting_keywords)
     await message.answer("Enter <b>keywords</b> separated by commas (or /skip):\nExample: <code>thermodynamics, entropy, exam</code>")
-
 
 @router.message(UploadStates.waiting_keywords, F.text)
 async def upload_keywords(message: Message, state: FSMContext, bot: Bot, db_user: User | None = None):
@@ -424,7 +405,7 @@ async def upload_keywords(message: Message, state: FSMContext, bot: Bot, db_user
             year=data.get("year"), keywords=keywords, description=None,
             uploaded_by=db_user.telegram_id if db_user else None, approved=approved
         )
-        if db_user: await user_service.increment_upload_count(session, db_user.telegram_id)
+        if db_user: await user_service.increment_upload_count(db_user.telegram_id)
 
     if approved:
         await status_msg.edit_text(f"✅ <b>Upload Successful!</b>\n\n📁 {escape(sanitise_text(doc.file_name, 100))}\n\nThank you for supporting the library! 🙏")
@@ -434,11 +415,9 @@ async def upload_keywords(message: Message, state: FSMContext, bot: Bot, db_user
             try: await bot.send_message(admin_id, f"⏳ <b>New pending upload</b>\nDoc ID: {doc.id}\nUse /admin to approve.")
             except Exception: pass
 
-
 @router.message(Command("cancel"), StateFilter(None))
 async def cancel_idle(message: Message):
     await message.answer("Nothing to cancel.")
-
 
 @router.message(Command("cancel"))
 async def cancel_fsm(message: Message, state: FSMContext):
