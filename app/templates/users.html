@@ -7,7 +7,7 @@
 
 <div class="flex justify-end items-center mb-6">
     <form method="GET" action="/admin/users" class="flex">
-        <input type="text" name="q" value="{{ q or '' }}" placeholder="Search username or ID..." class="border border-gray-200 p-2.5 rounded-l-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition bg-white">
+        <input type="text" name="q" value="{{ q or '' }}" placeholder="Search name, username, or ID..." class="border border-gray-200 p-2.5 rounded-l-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition bg-white">
         <button type="submit" class="bg-blue-500 text-white px-5 rounded-r-xl hover:bg-blue-600 transition shadow-sm">Search</button>
     </form>
 </div>
@@ -17,6 +17,7 @@
         <thead class="bg-gray-50/50 border-b border-gray-100">
             <tr>
                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Telegram ID</th>
+                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Username</th>
                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Searches</th>
                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Premium</th>
@@ -27,7 +28,8 @@
             {% for u in users %}
             <tr id="user-row-{{ u.id }}" class="hover:bg-gray-50/50 transition">
                 <td class="px-6 py-4 text-sm text-gray-500">{{ u.telegram_id }}</td>
-                <td class="px-6 py-4 text-sm font-medium text-gray-900">@{{ u.username or 'N/A' }}</td>
+                <td class="px-6 py-4 text-sm font-medium text-gray-900">{{ u.first_name or '' }} {{ u.last_name or '' }}</td>
+                <td class="px-6 py-4 text-sm text-gray-600">@{{ u.username or 'N/A' }}</td>
                 <td class="px-6 py-4 text-sm text-gray-600">{{ u.search_count }}</td>
                 <td class="px-6 py-4 text-sm">
                     {% if u.is_premium %}
@@ -41,7 +43,7 @@
                 </td>
             </tr>
             {% else %}
-            <tr><td colspan="5" class="px-6 py-4 text-center text-gray-500">No users found.</td></tr>
+            <tr><td colspan="6" class="px-6 py-4 text-center text-gray-500">No users found.</td></tr>
             {% endfor %}
         </tbody>
     </table>
