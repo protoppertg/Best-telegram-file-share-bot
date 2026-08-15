@@ -61,28 +61,19 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
                         except Exception:
                             pass
 
-    # 1. Send a hardcoded, working Animated Sticker (Zero work required for you!)
-    try:
-        # This is a universal animated "Books" sticker that works for everyone
-        await message.bot.send_sticker(message.chat.id, sticker="CAACAgIAAxkBAAIBZWFkN4F1Z2E0Y2RkYzVjZmY0NTY3ZgACBAADT4kqAAE5M5M6l3lLVAQ")
-    except Exception:
-        pass # If Telegram ever blocks this specific sticker, it just skips it
-
     async with get_session() as session:
         text_setting = await session.execute(select(BotSetting).where(BotSetting.key == "start_text"))
         text_setting = text_setting.scalar_one_or_none()
         
     default_text = (
-        "✨ <b>Welcome to PrepCore!</b> ✨\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "📚 Your ultimate library for study materials.\n"
-        "Find notes, PYQs, and books in seconds!\n\n"
-        "🛠 <b>How to use me:</b>\n"
-        "┣👉 <b>Search:</b> Type keywords or use advanced filters.\n"
-        "┣👉 <b>Upload:</b> Send a PDF to support the community.\n"
-        "┣👉 <b>Referral:</b> Invite friends to earn extra searches!\n"
-        "┗👉 <b>Premium:</b> Unlock unlimited searches & ad-free downloads.\n\n"
-        "<i>Ready to dive in? Just type a keyword below!</i> 🚀"
+        "<b>✨ Welcome to PrepCore!</b>\n"
+        "<blockquote>Your ultimate library for study materials. Find notes, PYQs, and books in seconds!</blockquote>\n"
+        "<b>🛠 Main Menu</b>\n"
+        "┣ <b>🔍 Search</b> — Type keywords or use filters (e.g., <code>physics class:10</code>)\n"
+        "┣ <b>📤 Upload</b> — Send a PDF to support the community\n"
+        "┣ <b>🤝 Referral</b> — Invite friends & earn rewards\n"
+        "┗ <b>🎟️ Premium</b> — Unlock unlimited searches\n\n"
+        "<i>Ready to dive in? Just type a keyword below!</i>"
     )
     text = text_setting.value if text_setting and text_setting.value else default_text
     
@@ -114,19 +105,17 @@ async def cmd_referral(message: Message, db_user: User | None = None):
         reward_text = f"🔍 <b>+{r_amount} Permanent Daily Searches</b>\n📈 Permanently increase your daily search limit!"
 
     text = (
-        "🤝 <b>Refer & Earn Program</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "Invite your friends to PrepCore and earn amazing rewards for every successful referral! 🎁\n\n"
-        f"🎯 <b>Reward Per Referral:</b>\n{reward_text}\n\n"
+        "<b>🤝 Refer & Earn Program</b>\n"
+        f"<blockquote>{reward_text}</blockquote>\n"
         f"📊 <b>Your Statistics:</b>\n"
         f"👥 Total Referrals: <b>{db_user.referral_count}</b>\n\n"
         "🔗 <b>Your Unique Referral Link:</b>\n"
         f"<code>{ref_link}</code>\n\n"
-        "<i>👉 Tap the link above to copy it, then share it with your friends. When they join, your reward is added automatically!</i>"
+        "<i>👉 Tap the link above to copy it, then share it with your friends!</i>"
     )
     
     kb = InlineKeyboardBuilder()
-    share_text = f"📚 Join PrepCore! The ultimate library for study materials. Search for notes, PYQs, and books instantly!"
+    share_text = f"📚 Join PrepCore! The ultimate library for study materials."
     kb.button(text="📤 Share Link", url=f"https://t.me/share/url?url={ref_link}&text={share_text}")
     
     await message.answer(text, reply_markup=kb.as_markup())
@@ -135,14 +124,13 @@ async def cmd_referral(message: Message, db_user: User | None = None):
 @router.message(Command("help"))
 async def cmd_help(message: Message):
     text = (
-        "📖 <b>Help & Guide</b>\n\n"
-        "🔍 <b>Basic Search:</b>\n"
-        "Just type what you're looking for (e.g., <code>physics notes</code>).\n\n"
-        "🚀 <b>Advanced Search:</b>\n"
+        "<b>📖 Help & Guide</b>\n\n"
+        "<blockquote>Just type what you're looking for (e.g., <code>physics notes</code>).</blockquote>\n"
+        "<b>🚀 Advanced Search:</b>\n"
         "Use filters to narrow down results instantly!\n"
         "<code>math subject:Physics class:Class 10 year:2023</code>\n\n"
-        "📤 <b>Upload:</b> Send a PDF to support the library.\n"
-        "🎟️ <b>Premium:</b> Get unlimited searches and ad-free downloads."
+        "<b>📤 Upload:</b> Send a PDF to support the library.\n"
+        "<b>🎟️ Premium:</b> Get unlimited searches and ad-free downloads."
     )
     await message.answer(text)
 
@@ -153,10 +141,9 @@ async def cmd_about(message: Message):
         text_setting = text_setting.scalar_one_or_none()
         
     default_text = (
-        "ℹ️ <b>About PrepCore</b>\n\n"
-        "PrepCore is a searchable library of study materials.\n"
-        "Search for PDFs, notes, and previous year questions.\n\n"
-        "Built with ❤️ using Python and FastAPI."
+        "<b>ℹ️ About PrepCore</b>\n"
+        "<blockquote>PrepCore is a searchable library of study materials. Search for PDFs, notes, and previous year questions.</blockquote>\n"
+        "<i>Built with ❤️ using Python and FastAPI.</i>"
     )
     text = text_setting.value if text_setting and text_setting.value else default_text
     await message.answer(text)
@@ -169,10 +156,10 @@ async def cmd_usage(message: Message, db_user: User | None = None):
     search_limit = await user_service.get_user_search_limit(db_user)
     upload_limit = await user_service.get_user_upload_limit(db_user)
     text = (
-        "📊 <b>Your Daily Usage</b>\n\n"
-        f"🔍 Searches: {db_user.search_count} / {search_limit}\n"
-        f"📤 Uploads: {db_user.upload_count} / {upload_limit}\n\n"
-        "Limits reset daily."
+        "<b>📊 Your Daily Usage</b>\n\n"
+        f"🔍 Searches: <b>{db_user.search_count} / {search_limit}</b>\n"
+        f"📤 Uploads: <b>{db_user.upload_count} / {upload_limit}</b>\n\n"
+        "<i>Limits reset daily.</i>"
     )
     await message.answer(text)
 
@@ -195,8 +182,8 @@ async def cmd_premium(message: Message, db_user: User | None = None):
         status = "❌ <b>Not active</b>"
 
     default_text = (
-        f"🎟️ <b>Premium Status</b>\n\n"
-        f"Status: {status}\n\n"
+        f"<b>🎟️ Premium Status</b>\n"
+        f"<blockquote>Status: {status}</blockquote>\n"
         f"<b>Premium Benefits:</b>\n"
         f"• Unlimited searches per day\n"
         f"• No ads/short links when downloading files\n\n"
@@ -209,7 +196,7 @@ async def cmd_premium(message: Message, db_user: User | None = None):
 
 @router.message(F.text == "🔍 Search")
 async def btn_search(message: Message):
-    await message.answer("🔍 Please type your search query now (e.g., <code>physics notes</code>):")
+    await message.answer("🔍 <i>Please type your search query now (e.g., <code>physics notes</code>):</i>")
 
 @router.message(Command("search"))
 async def cmd_search(message: Message, command: CommandObject, db_user: User | None = None):
@@ -256,19 +243,24 @@ def _parse_advanced_search(raw_query: str) -> tuple[str, Optional[str], Optional
     return clean_query, subject, class_name, year
 
 async def _perform_search(message: Message, query: str, db_user: User | None, page: int) -> None:
-    # 2. Show "typing..." animation while the bot searches to make it feel fast and alive!
+    # 1. Show typing action
     await message.bot.send_chat_action(message.chat.id, "typing")
+    
+    # 2. Send a temporary "Searching..." message for a premium app feel
+    status_msg = await message.answer(f"🔎 <i>Searching for <b>{escape(sanitise_text(query, 50))}</b>...</i>")
 
     async with get_session() as session:
         setting = await session.execute(select(BotSetting).where(BotSetting.key == "search_enabled"))
         setting = setting.scalar_one_or_none()
         if setting and setting.value == "false":
+            await status_msg.delete()
             await message.answer("🚫 <b>Search is temporarily disabled by the admin.</b>\nPlease try again later.")
             return
 
         if db_user:
             if not await user_service.check_search_limit(db_user):
                 limit = await user_service.get_user_search_limit(db_user)
+                await status_msg.delete()
                 await message.answer(f"⛔ <b>Daily search limit reached ({limit}/{limit})</b>")
                 return
 
@@ -282,6 +274,9 @@ async def _perform_search(message: Message, query: str, db_user: User | None, pa
         if db_user:
             await user_service.increment_search_count(db_user.telegram_id)
             await user_service.log_search(session, db_user.id, query, total)
+
+    # 3. Delete the "Searching..." message
+    await status_msg.delete()
 
     if not results:
         await message.answer(f"🔍 No results found for <b>{escape(sanitise_text(query, 100))}</b>.\nTry different keywords or remove some filters.")
@@ -300,12 +295,16 @@ async def _perform_search(message: Message, query: str, db_user: User | None, pa
     per_page = settings.SEARCH_RESULTS_PER_PAGE
     total_pages = max(1, (total + per_page - 1) // per_page)
 
-    text = f"🔍 <b>Search: {escape(sanitise_text(query, 100))}</b>\n📊 Found <b>{total}</b> result(s) — Page {page}/{total_pages}\n\nTap a file to download:"
+    text = (
+        f"🔍 <b>Search: {escape(sanitise_text(query, 100))}</b>\n"
+        f"📊 Found <b>{total}</b> result(s) — Page {page}/{total_pages}\n\n"
+        f"<i>Select a file to download:</i>"
+    )
     await message.answer(text, reply_markup=search_results_keyboard(results, query_key, page, total_pages))
 
 @router.message(F.text == "📤 Upload")
 async def btn_upload(message: Message):
-    await message.answer("📤 Please send the PDF file you want to upload to the library.")
+    await message.answer("📤 <i>Please send the PDF file you want to upload to the library.</i>")
 
 @router.message(F.document, StateFilter(None))
 async def handle_document_upload(message: Message, state: FSMContext, db_user: User | None = None):
@@ -389,7 +388,7 @@ async def upload_keywords(message: Message, state: FSMContext, bot: Bot, db_user
     data = await state.get_data()
     await state.clear()
 
-    status_msg = await message.answer("⏳ Processing your upload...")
+    status_msg = await message.answer("⏳ <i>Processing your upload...</i>")
     try:
         new_file_id, channel_msg_id = await forward_to_channel(bot, file_id=data["original_file_id"], caption=f"📤 Uploaded by: @{message.from_user.username or message.from_user.id}\n📁 {data.get('file_name', 'document.pdf')}")
     except Exception as exc:
