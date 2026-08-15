@@ -499,33 +499,99 @@ async def update_keyboards(request: Request):
 
 @router.get("/migrate", dependencies=[Depends(verify_admin)])
 async def migrate_data(request: Request):
-    if "admins" not in request.state.perms: return RedirectResponse(url="/admin/?status=unauthorized", status_code=303)
+    if "admins" not in request.state.perms:
+        return RedirectResponse(url="/admin/?status=unauthorized", status_code=303)
+        
     old_url = settings.DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")
     new_url = os.environ.get("NEW_DATABASE_URL")
-    if not new_url: return "Error: NEW_DATABASE_URL is not set."
-    if "sslmode" not in new_url: new_url += "?sslmode=require"
+    
+    if not new_url:
+        return "Error: NEW_DATABASE_URL is not set in Render environment."
+        
+    # Force SSL and disable thread safety checks that cause pooler crashes
+    if "sslmode" not in new_url:
+        new_url += "?sslmode=require"
+    if "statement_cache_size" not in new_url:
+        new_url += "&statement_cache_size=0"
 
     try:
         old_conn = await asyncpg.connect(old_url)
         new_conn = await asyncpg.connect(new_url)
-    except Exception as e: return f"Connection failed: {e}"
+    except Exception as e:
+        return f"❌ Database Connection Failed: {e}"
 
-    await new_conn.execute("CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, telegram_id BIGINT UNIQUE NOT NULL, username VARCHAR(255), first_name VARCHAR(255), last_name VARCHAR(255), is_premium BOOLEAN DEFAULT false, premium_expiry TIMESTAMP WITH TIME ZONE, is_banned BOOLEAN DEFAULT false, search_count INTEGER DEFAULT 0, upload_count INTEGER DEFAULT 0, referral_count INTEGER DEFAULT 0, last_reset_date DATE DEFAULT CURRENT_DATE, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(), updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());")
-    await new_conn.execute("CREATE TABLE IF NOT EXISTS documents (id SERIAL PRIMARY KEY, file_id TEXT NOT NULL, message_id BIGINT, file_name TEXT NOT NULL, subject VARCHAR(255), category VARCHAR(100), class_name VARCHAR(100), year INTEGER, keywords TEXT[], description TEXT, uploaded_by BIGINT, approved BOOLEAN DEFAULT true, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(), updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());")
-    await new_conn.execute("CREATE TABLE IF NOT EXISTS bot_settings (key VARCHAR(50) PRIMARY KEY, value TEXT);")
+    # 1. Create tables in new DB with ALL columns
+    try:
+        await new_conn.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY, telegram_id BIGINT UNIQUE NOT NULL, username VARCHAR(255),
+                first_name VARCHAR(255), last_name VARCHAR(255), is_premium BOOLEAN DEFAULT false,
+                premium_expiry TIMESTAMP WITH TIME ZONE, is_banned BOOLEAN DEFAULT false,
+                search_count INTEGER DEFAULT 0, upload_count INTEGER DEFAULT 0, referral_count INTEGER DEFAULT 0,
+                last_reset_date DATE DEFAULT CURRENT_DATE, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            );
+        """)
+        await new_conn.execute("""
+            CREATE TABLE IF NOT EXISTS documents (
+                id SERIAL PRIMARY KEY, file_id TEXT NOT NULL, message_id BIGINT, file_name TEXT NOT NULL,
+                subject VARCHAR(255), category VARCHAR(100), class_name VARCHAR(100), year INTEGER,
+                keywords TEXT[], description TEXT, uploaded_by BIGINT, approved BOOLEAN DEFAULT true,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(), updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            );
+        """)
+        await new_conn.execute("""
+            CREATE TABLE IF NOT EXISTS bot_settings (key VARCHAR(50) PRIMARY KEY, value TEXT);
+        """)
+        await new_conn.execute("""
+            CREATE TABLE IF NOT EXISTS admin_users (
+                id SERIAL PRIMARY KEY, telegram_id BIGINT UNIQUE NOT NULL, name VARCHAR(255),
+                password VARCHAR(255), permissions TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            );
+        """)
+        await new_conn.execute("""
+            CREATE TABLE IF NOT EXISTS audit_logs (
+                id SERIAL PRIMARY KEY, admin_id VARCHAR(255), admin_name VARCHAR(255),
+                action VARCHAR(255), target VARCHAR(255), created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            );
+        """)
+    except Exception as e:
+        return f"❌ Error creating tables: {e}"
 
-    users = await old_conn.fetch("SELECT telegram_id, username, first_name, last_name, is_premium, premium_expiry, is_banned, search_count, upload_count, last_reset_date FROM users")
-    if users:
-        await new_conn.executemany("INSERT INTO users (telegram_id, username, first_name, last_name, is_premium, premium_expiry, is_banned, search_count, upload_count, last_reset_date) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) ON CONFLICT DO NOTHING", [(u['telegram_id'], u['username'], u['first_name'], u['last_name'], u['is_premium'], u['premium_expiry'], u['is_banned'], u['search_count'], u['upload_count'], u['last_reset_date']) for u in users])
+    # 2. Bulk Copy Users
+    try:
+        users = await old_conn.fetch("SELECT telegram_id, username, first_name, last_name, is_premium, premium_expiry, is_banned, search_count, upload_count, referral_count, last_reset_date FROM users")
+        if users:
+            await new_conn.executemany(
+                "INSERT INTO users (telegram_id, username, first_name, last_name, is_premium, premium_expiry, is_banned, search_count, upload_count, referral_count, last_reset_date) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) ON CONFLICT DO NOTHING",
+                [(u['telegram_id'], u['username'], u['first_name'], u['last_name'], u['is_premium'], u['premium_expiry'], u['is_banned'], u['search_count'], u['upload_count'], u.get('referral_count', 0), u['last_reset_date']) for u in users]
+            )
+    except Exception as e:
+        logger.error(f"Migration error copying users: {e}")
 
-    docs = await old_conn.fetch("SELECT file_id, message_id, file_name, subject, category, class_name, year, keywords, description, uploaded_by, approved FROM documents")
-    if docs:
-        await new_conn.executemany("INSERT INTO documents (file_id, message_id, file_name, subject, category, class_name, year, keywords, description, uploaded_by, approved) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) ON CONFLICT DO NOTHING", [(d['file_id'], d['message_id'], d['file_name'], d['subject'], d['category'], d['class_name'], d['year'], d['keywords'], d['description'], d['uploaded_by'], d['approved']) for d in docs])
+    # 3. Bulk Copy Documents
+    try:
+        docs = await old_conn.fetch("SELECT file_id, message_id, file_name, subject, category, class_name, year, keywords, description, uploaded_by, approved FROM documents")
+        if docs:
+            await new_conn.executemany(
+                "INSERT INTO documents (file_id, message_id, file_name, subject, category, class_name, year, keywords, description, uploaded_by, approved) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) ON CONFLICT DO NOTHING",
+                [(d['file_id'], d['message_id'], d['file_name'], d['subject'], d['category'], d['class_name'], d['year'], d['keywords'], d['description'], d['uploaded_by'], d['approved']) for d in docs]
+            )
+    except Exception as e:
+        logger.error(f"Migration error copying documents: {e}")
 
-    settings_row = await old_conn.fetch("SELECT key, value FROM bot_settings")
-    if settings_row:
-        await new_conn.executemany("INSERT INTO bot_settings (key, value) VALUES ($1, $2) ON CONFLICT DO NOTHING", [(s['key'], s['value']) for s in settings_row])
+    # 4. Bulk Copy Settings
+    try:
+        settings_row = await old_conn.fetch("SELECT key, value FROM bot_settings")
+        if settings_row:
+            await new_conn.executemany(
+                "INSERT INTO bot_settings (key, value) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+                [(s['key'], s['value']) for s in settings_row]
+            )
+    except Exception as e:
+        logger.error(f"Migration error copying settings: {e}")
 
     await old_conn.close()
     await new_conn.close()
-    return f"✅ Success! Copied {len(users)} users, {len(docs)} documents, and {len(settings_row)} settings to the new database."
+    
+    return f"✅ Migration Complete! Copied {len(users)} users, {len(docs)} documents, and {len(settings_row)} settings."
