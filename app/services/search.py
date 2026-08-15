@@ -1,11 +1,11 @@
-"""PostgreSQL full-text search service (Pure ORM - Bulletproof)."""
+"""PostgreSQL full-text search service (Highly Optimized & Dynamic)."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import List, Optional
 
-from sqlalchemy import or_, select, func
+from sqlalchemy import or_, select, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -38,39 +38,7 @@ async def search_documents(
     if not words:
         words = [""]
 
-    stmt = select(Document).where(Document.approved == True)
-    count_stmt = select(func.count(Document.id)).where(Document.approved == True)
-
-    for word in words:
-        word_filter = or_(
-            Document.file_name.ilike(f"%{word}%"),
-            Document.subject.ilike(f"%{word}%"),
-            Document.category.ilike(f"%{word}%"),
-            Document.class_name.ilike(f"%{word}%")
-        )
-        stmt = stmt.where(word_filter)
-        count_stmt = count_stmt.where(word_filter)
-
-    if subject:
-        stmt = stmt.where(Document.subject.ilike(f"%{subject}%"))
-        count_stmt = count_stmt.where(Document.subject.ilike(f"%{subject}%"))
-    
-    if class_name:
-        stmt = stmt.where(Document.class_name.ilike(f"%{class_name}%"))
-        count_stmt = count_stmt.where(Document.class_name.ilike(f"%{class_name}%"))
-        
-    if year:
-        stmt = stmt.where(Document.year == year)
-        count_stmt = count_stmt.where(Document.year == year)
-
-    first_word = words[0]
-    stmt = stmt.order_by(
-        Document.file_name.ilike(f"{first_word}%").desc(),
-        Document.created_at.desc()
-    )
-
-    stmt = stmt.offset(offset).limit(per_page)
-
+    # Cache key includes all filters to ensure dynamic caching
     cache_key = f"search:{query}:{page}:{subject}:{class_name}:{year}"
     
     cache = await get_cache()
@@ -79,6 +47,49 @@ async def search_documents(
         return [SearchRow(**r) for r in cached["rows"]], cached["total"]
 
     try:
+        stmt = select(Document).where(Document.approved == True)
+        count_stmt = select(func.count(Document.id)).where(Document.approved == True)
+
+        # Dynamic Word Matching (AND logic: all words must exist, in any order)
+        for word in words:
+            word_filter = or_(
+                Document.file_name.ilike(f"%{word}%"),
+                Document.subject.ilike(f"%{word}%"),
+                Document.category.ilike(f"%{word}%"),
+                Document.class_name.ilike(f"%{word}%")
+            )
+            stmt = stmt.where(word_filter)
+            count_stmt = count_stmt.where(word_filter)
+
+        # Dynamic Filtering
+        if subject:
+            stmt = stmt.where(Document.subject.ilike(f"%{subject}%"))
+            count_stmt = count_stmt.where(Document.subject.ilike(f"%{subject}%"))
+        
+        if class_name:
+            stmt = stmt.where(Document.class_name.ilike(f"%{class_name}%"))
+            count_stmt = count_stmt.where(Document.class_name.ilike(f"%{class_name}%"))
+            
+        if year:
+            stmt = stmt.where(Document.year == year)
+            count_stmt = count_stmt.where(Document.year == year)
+
+        # Intelligent Ranking
+        # 1. Files that contain the EXACT full phrase get priority (rank 0)
+        # 2. Files that START WITH the first word get secondary priority (rank 1)
+        # 3. Everything else (rank 2)
+        exact_phrase_rank = Document.file_name.ilike(f"%{query.strip()}%").desc()
+        starts_with_rank = Document.file_name.ilike(f"{words[0]}%").desc()
+        
+        stmt = stmt.order_by(
+            exact_phrase_rank,
+            starts_with_rank,
+            Document.created_at.desc()
+        )
+
+        stmt = stmt.offset(offset).limit(per_page)
+
+        # Execute queries
         result = await session.execute(stmt)
         docs = result.scalars().all()
         
@@ -86,7 +97,9 @@ async def search_documents(
         total = count_result.scalar() or 0
 
         rows = [{"id": d.id, "file_name": d.file_name, "subject": d.subject, "category": d.category, "class_name": d.class_name, "year": d.year} for d in docs]
-        await cache.set(cache_key, {"rows": rows, "total": total}, ttl=settings.CACHE_TTL_SECONDS)
+        
+        # Cache results for 10 minutes to make it EXTREMELY fast for subsequent users
+        await cache.set(cache_key, {"rows": rows, "total": total}, ttl=600)
         return [SearchRow(**r) for r in rows], total
     except Exception as e:
         logger.error("search_database_error", error=str(e), exc_info=True)
