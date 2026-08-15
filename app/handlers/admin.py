@@ -15,7 +15,7 @@ from sqlalchemy import func, select
 
 from app.config import settings
 from app.database import get_session
-from app.models import BotSetting, Document, User
+from app.models import AdminUser, BotSetting, Document, User
 from app.services import document as doc_service
 from app.services import user as user_service
 from app.utils.logger import logger
@@ -35,11 +35,36 @@ class BroadcastStates(StatesGroup):
 class DirectMessageStates(StatesGroup):
     waiting_message = State()
 
-def is_admin(user_id: int) -> bool:
-    # Read directly from OS environment to bypass all Pydantic/Render caching
+async def has_permission(user_id: int, permission: str) -> bool:
+    # 1. Check Super Admin from env var
     raw_env = os.environ.get("ADMIN_IDS", "")
     admin_ids = [int(x.strip()) for x in raw_env.split(",") if x.strip().isdigit()]
-    return user_id in admin_ids
+    if user_id in admin_ids:
+        return True
+        
+    # 2. Check Sub-Admins in database
+    async with get_session() as session:
+        res = await session.execute(select(AdminUser).where(AdminUser.telegram_id == user_id))
+        admin = res.scalar_one_or_none()
+        if admin and admin.permissions:
+            perms = [p.strip() for p in admin.permissions.split(",")]
+            return permission in perms
+    return False
+
+def admin_menu_kb(perms: list[str] = []):
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    kb = InlineKeyboardBuilder()
+    
+    if "stats" in perms: kb.button(text="📊 Statistics", callback_data="adm:stats")
+    if "users" in perms: kb.button(text="👥 Users", callback_data="adm:users:1")
+    if "documents" in perms:
+        kb.button(text="📄 Documents", callback_data="adm:docs:1")
+        kb.button(text="⏳ Pending", callback_data="adm:pend:1")
+    if "forcesub" in perms: kb.button(text="⚙️ Force Sub", callback_data="adm:fs")
+    if "broadcast" in perms: kb.button(text="📢 Broadcast", callback_data="adm:bcast")
+    
+    kb.adjust(2)
+    return kb.as_markup()
 
 async def get_force_sub_channels(session) -> list[dict]:
     res = await session.execute(select(BotSetting).where(BotSetting.key == "force_sub_channels"))
@@ -55,18 +80,6 @@ async def save_force_sub_channels(session, channels_list: list[dict]):
     val = json.dumps(channels_list)
     if not s: session.add(BotSetting(key="force_sub_channels", value=val))
     else: s.value = val
-
-def admin_menu_kb():
-    from aiogram.utils.keyboard import InlineKeyboardBuilder
-    kb = InlineKeyboardBuilder()
-    kb.button(text="📊 Statistics", callback_data="adm:stats")
-    kb.button(text="👥 Users", callback_data="adm:users:1")
-    kb.button(text="📄 Documents", callback_data="adm:docs:1")
-    kb.button(text="⏳ Pending", callback_data="adm:pend:1")
-    kb.button(text="⚙️ Force Sub", callback_data="adm:fs")
-    kb.button(text="📢 Broadcast", callback_data="adm:bcast")
-    kb.adjust(2)
-    return kb.as_markup()
 
 def admin_stats_kb():
     from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -133,22 +146,47 @@ def admin_doc_actions_kb(doc_id: int, approved: bool):
 @router.message(Command("admin"))
 async def cmd_admin(message: Message, state: FSMContext):
     await state.clear()
-    if not is_admin(message.from_user.id):
-        await message.answer("❌ You do not have permission to use this command.")
-        return
+    
+    # Get permissions for this user
+    raw_env = os.environ.get("ADMIN_IDS", "")
+    super_admins = [int(x.strip()) for x in raw_env.split(",") if x.strip().isdigit()]
+    
+    if message.from_user.id in super_admins:
+        perms = ["stats", "users", "documents", "broadcast", "forcesub"] # Super admin gets all
+    else:
+        async with get_session() as session:
+            res = await session.execute(select(AdminUser).where(AdminUser.telegram_id == message.from_user.id))
+            admin = res.scalar_one_or_none()
+            if not admin or not admin.permissions:
+                await message.answer("❌ You do not have permission to use this command.")
+                return
+            perms = [p.strip() for p in admin.permissions.split(",")]
         
-    await message.answer("🔧 <b>Admin Panel</b>\n\nWelcome to the control center. Select an option below:", reply_markup=admin_menu_kb())
+    await message.answer("🔧 <b>Admin Panel</b>\n\nWelcome to the control center. Select an option below:", reply_markup=admin_menu_kb(perms))
 
 @router.callback_query(F.data == "adm:menu")
 async def cb_admin_menu(callback: CallbackQuery, state: FSMContext):
-    if not is_admin(callback.from_user.id): return
     await state.clear()
-    await callback.message.edit_text("🔧 <b>Admin Panel</b>\n\nSelect an option below:", reply_markup=admin_menu_kb())
+    raw_env = os.environ.get("ADMIN_IDS", "")
+    super_admins = [int(x.strip()) for x in raw_env.split(",") if x.strip().isdigit()]
+    
+    if callback.from_user.id in super_admins:
+        perms = ["stats", "users", "documents", "broadcast", "forcesub"]
+    else:
+        async with get_session() as session:
+            res = await session.execute(select(AdminUser).where(AdminUser.telegram_id == callback.from_user.id))
+            admin = res.scalar_one_or_none()
+            if not admin or not admin.permissions:
+                await callback.answer("❌ Access Denied.", show_alert=True)
+                return
+            perms = [p.strip() for p in admin.permissions.split(",")]
+            
+    await callback.message.edit_text("🔧 <b>Admin Panel</b>\n\nSelect an option below:", reply_markup=admin_menu_kb(perms))
     await callback.answer()
 
 @router.callback_query(F.data == "adm:stats")
 async def cb_admin_stats(callback: CallbackQuery):
-    if not is_admin(callback.from_user.id): return
+    if not await has_permission(callback.from_user.id, "stats"): return
     async with get_session() as session:
         stats = await user_service.get_stats(session)
     text = (
@@ -165,7 +203,7 @@ async def cb_admin_stats(callback: CallbackQuery):
 
 @router.callback_query(F.data == "adm:bcast")
 async def cb_admin_bcast(callback: CallbackQuery, state: FSMContext):
-    if not is_admin(callback.from_user.id): return
+    if not await has_permission(callback.from_user.id, "broadcast"): return
     await state.set_state(BroadcastStates.waiting_message)
     await callback.message.edit_text(
         "📢 <b>Broadcast Message</b>\n\n"
@@ -177,7 +215,7 @@ async def cb_admin_bcast(callback: CallbackQuery, state: FSMContext):
 @router.message(BroadcastStates.waiting_message, Command("cancel"))
 async def cancel_bcast(message: Message, state: FSMContext):
     await state.clear()
-    await message.answer("❌ Broadcast cancelled.", reply_markup=admin_menu_kb())
+    await message.answer("❌ Broadcast cancelled.", reply_markup=admin_menu_kb(["broadcast"]))
 
 @router.message(BroadcastStates.waiting_message)
 async def perform_bcast(message: Message, state: FSMContext, bot: Bot):
@@ -199,11 +237,11 @@ async def _background_bcast(bot: Bot, admin_chat_id: int, message_id: int, user_
             await asyncio.sleep(0.05)
         except Exception:
             failed_count += 1
-    await bot.send_message(admin_chat_id, f"✅ <b>Broadcast Finished!</b>\n\n👥 Total: {len(user_ids)}\n✅ Sent: {sent_count}\n❌ Failed: {failed_count}", reply_markup=admin_menu_kb())
+    await bot.send_message(admin_chat_id, f"✅ <b>Broadcast Finished!</b>\n\n👥 Total: {len(user_ids)}\n✅ Sent: {sent_count}\n❌ Failed: {failed_count}", reply_markup=admin_menu_kb(["broadcast"]))
 
 @router.callback_query(F.data == "adm:fs")
 async def cb_admin_fs(callback: CallbackQuery, state: FSMContext):
-    if not is_admin(callback.from_user.id): return
+    if not await has_permission(callback.from_user.id, "forcesub"): return
     await state.clear()
     async with get_session() as session:
         channels = await get_force_sub_channels(session)
@@ -222,7 +260,7 @@ async def cb_admin_fs(callback: CallbackQuery, state: FSMContext):
 
 @router.message(ForceSubStates.waiting_channel_id, F.text & ~F.text.startswith("/"))
 async def fs_channel_id(message: Message, state: FSMContext):
-    if not is_admin(message.from_user.id): return
+    if not await has_permission(message.from_user.id, "forcesub"): return
     channel_id = message.text.strip()
     if not channel_id.startswith("-100"):
         await message.answer("Invalid ID. It must start with -100. Try again or /cancel:")
@@ -233,7 +271,7 @@ async def fs_channel_id(message: Message, state: FSMContext):
 
 @router.message(ForceSubStates.waiting_invite_link, F.text & ~F.text.startswith("/"))
 async def fs_invite_link(message: Message, state: FSMContext):
-    if not is_admin(message.from_user.id): return
+    if not await has_permission(message.from_user.id, "forcesub"): return
     link = message.text.strip()
     if not link.startswith("https://t.me/"):
         await message.answer("Invalid link. Must start with https://t.me/. Try again or /cancel:")
@@ -245,15 +283,15 @@ async def fs_invite_link(message: Message, state: FSMContext):
         channels.append({"id": channel_id, "link": link})
         await save_force_sub_channels(session, channels)
     await state.clear()
-    await message.answer("✅ Force Sub channel added!", reply_markup=admin_menu_kb())
+    await message.answer("✅ Force Sub channel added!", reply_markup=admin_menu_kb(["forcesub"]))
 
 @router.message(ForceSubStates.waiting_channel_id, Command("clear"))
 async def fs_clear(message: Message, state: FSMContext):
-    if not is_admin(message.from_user.id): return
+    if not await has_permission(message.from_user.id, "forcesub"): return
     await state.clear()
     async with get_session() as session:
         await save_force_sub_channels(session, [])
-    await message.answer("🗑 All Force Sub channels cleared.", reply_markup=admin_menu_kb())
+    await message.answer("🗑 All Force Sub channels cleared.", reply_markup=admin_menu_kb(["forcesub"]))
 
 @router.channel_post(F.document)
 async def auto_index_channel_post(message: Message, bot: Bot):
@@ -276,7 +314,7 @@ async def auto_index_channel_post(message: Message, bot: Bot):
 
 @router.message(Command("edit_doc"))
 async def cmd_edit_doc(message: Message, command: CommandObject):
-    if not is_admin(message.from_user.id): return
+    if not await has_permission(message.from_user.id, "documents"): return
     if not command.args:
         await message.answer("Usage: <code>/edit_doc [id] [field]=[value]</code>\nFields: file_name, subject, category, class_name, year, keywords")
         return
@@ -298,13 +336,13 @@ async def cmd_edit_doc(message: Message, command: CommandObject):
 
 @router.message(Command("dedupe"))
 async def cmd_dedupe(message: Message):
-    if not is_admin(message.from_user.id): return
+    if not await has_permission(message.from_user.id, "documents"): return
     async with get_session() as session: deleted_count = await doc_service.delete_duplicates(session)
     await message.answer(f"🧹 Cleanup Complete! Deleted {deleted_count} duplicate files.")
 
 @router.callback_query(F.data.startswith("adm:users:"))
 async def cb_admin_users(callback: CallbackQuery):
-    if not is_admin(callback.from_user.id): return
+    if not await has_permission(callback.from_user.id, "users"): return
     page = int(callback.data.split(":")[2])
     per_page = 5
     async with get_session() as session:
@@ -317,7 +355,7 @@ async def cb_admin_users(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("adm:u:"))
 async def cb_admin_user_actions(callback: CallbackQuery, state: FSMContext):
-    if not is_admin(callback.from_user.id): return
+    if not await has_permission(callback.from_user.id, "users"): return
     parts = callback.data.split(":")
     telegram_id = int(parts[2])
     if len(parts) == 3:
@@ -346,11 +384,11 @@ async def cb_admin_user_actions(callback: CallbackQuery, state: FSMContext):
 @router.message(DirectMessageStates.waiting_message, Command("cancel"))
 async def cancel_dm(message: Message, state: FSMContext):
     await state.clear()
-    await message.answer("❌ Direct message cancelled.", reply_markup=admin_menu_kb())
+    await message.answer("❌ Direct message cancelled.", reply_markup=admin_menu_kb(["users"]))
 
 @router.message(DirectMessageStates.waiting_message)
 async def perform_dm(message: Message, state: FSMContext, bot: Bot):
-    if not is_admin(message.from_user.id): return
+    if not await has_permission(message.from_user.id, "users"): return
     data = await state.get_data()
     target_id = data.get("target_id")
     await state.clear()
@@ -362,7 +400,7 @@ async def perform_dm(message: Message, state: FSMContext, bot: Bot):
 
 @router.callback_query(F.data.startswith("adm:docs:"))
 async def cb_admin_docs(callback: CallbackQuery):
-    if not is_admin(callback.from_user.id): return
+    if not await has_permission(callback.from_user.id, "documents"): return
     page = int(callback.data.split(":")[2])
     per_page = 5
     async with get_session() as session:
@@ -375,7 +413,7 @@ async def cb_admin_docs(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("adm:pend:"))
 async def cb_admin_pending(callback: CallbackQuery):
-    if not is_admin(callback.from_user.id): return
+    if not await has_permission(callback.from_user.id, "documents"): return
     page = int(callback.data.split(":")[2])
     per_page = 5
     async with get_session() as session:
@@ -389,7 +427,7 @@ async def cb_admin_pending(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("adm:doc:"))
 async def cb_admin_doc_actions(callback: CallbackQuery, bot: Bot):
-    if not is_admin(callback.from_user.id): return
+    if not await has_permission(callback.from_user.id, "documents"): return
     parts = callback.data.split(":")
     doc_id = int(parts[2])
     if len(parts) == 3:
