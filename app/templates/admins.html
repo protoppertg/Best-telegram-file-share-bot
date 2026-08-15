@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="mb-8">
+    <h1 class="text-3xl font-bold text-gray-900">Admin Management</h1>
+    <p class="text-gray-500 mt-1">Add sub-admins and assign specific permissions.</p>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+    <!-- Existing Admins -->
+    <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+        <h2 class="text-xl font-bold mb-4 text-gray-900">Existing Admins</h2>
+        <div class="space-y-3">
+            {% for a in admins %}
+            <div class="flex items-center justify-between bg-gray-50 p-4 rounded-xl border border-gray-100">
+                <div>
+                    <p class="font-medium text-gray-900">{{ a.name or 'Unknown' }}</p>
+                    <p class="text-sm text-gray-500">ID: <code>{{ a.telegram_id }}</code></p>
+                    <p class="text-xs text-blue-500 mt-1">{{ a.permissions or 'No permissions' }}</p>
+                </div>
+                <form method="POST" action="/admin/admins/delete/{{ a.id }}" onsubmit="return confirm('Are you sure you want to remove this admin?');">
+                    <button type="submit" class="text-red-500 hover:text-red-700 p-2"><i class="fas fa-trash"></i></button>
+                </form>
+            </div>
+            {% else %}
+            <p class="text-gray-500 text-sm">No sub-admins added yet.</p>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Add New Admin -->
+    <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+        <h2 class="text-xl font-bold mb-4 text-gray-900">Add New Admin</h2>
+        <form method="POST" action="/admin/admins/add" class="space-y-4">
+            <div>
+                <label class="block text-gray-700 text-sm font-bold mb-2">Telegram ID</label>
+                <input type="number" name="telegram_id" required class="w-full border border-gray-200 p-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition" placeholder="123456789">
+            </div>
+            <div>
+                <label class="block text-gray-700 text-sm font-bold mb-2">Name (Optional)</label>
+                <input type="text" name="name" class="w-full border border-gray-200 p-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition" placeholder="John Doe">
+            </div>
+            <div>
+                <label class="block text-gray-700 text-sm font-bold mb-3">Permissions</label>
+                <div class="grid grid-cols-2 gap-3">
+                    <label class="flex items-center space-x-2 p-3 bg-gray-50 rounded-xl cursor-pointer">
+                        <input type="checkbox" name="permissions" value="stats" class="rounded text-blue-500 focus:ring-blue-400">
+                        <span class="text-sm">View Stats</span>
+                    </label>
+                    <label class="flex items-center space-x-2 p-3 bg-gray-50 rounded-xl cursor-pointer">
+                        <input type="checkbox" name="permissions" value="users" class="rounded text-blue-500 focus:ring-blue-400">
+                        <span class="text-sm">Manage Users</span>
+                    </label>
+                    <label class="flex items-center space-x-2 p-3 bg-gray-50 rounded-xl cursor-pointer">
+                        <input type="checkbox" name="permissions" value="documents" class="rounded text-blue-500 focus:ring-blue-400">
+                        <span class="text-sm">Manage Docs</span>
+                    </label>
+                    <label class="flex items-center space-x-2 p-3 bg-gray-50 rounded-xl cursor-pointer">
+                        <input type="checkbox" name="permissions" value="broadcast" class="rounded text-blue-500 focus:ring-blue-400">
+                        <span class="text-sm">Broadcast</span>
+                    </label>
+                    <label class="flex items-center space-x-2 p-3 bg-gray-50 rounded-xl cursor-pointer">
+                        <input type="checkbox" name="permissions" value="forcesub" class="rounded text-blue-500 focus:ring-blue-400">
+                        <span class="text-sm">Force Sub</span>
+                    </label>
+                </div>
+            </div>
+            <button type="submit" class="bg-blue-500 text-white px-6 py-2.5 rounded-xl hover:bg-blue-600 transition shadow-sm w-full">Add Admin</button>
+        </form>
+    </div>
+</div>
+{% endblock %}
