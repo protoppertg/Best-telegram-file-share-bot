@@ -74,5 +74,6 @@ class AdminUser(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     telegram_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False, index=True)
     name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    password: Mapped[Optional[str]] = mapped_column(String(255), nullable=True) # For Web Panel Login
     permissions: Mapped[Optional[str]] = mapped_column(Text, nullable=True) # Comma-separated: "stats,users,documents"
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
