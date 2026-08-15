@@ -473,3 +473,35 @@ async def migrate_data():
     await old_conn.close()
     await new_conn.close()
     return f"✅ Success! Copied {len(users)} users, {len(docs)} documents, and {len(settings_row)} settings to the new database."
+# ── Admin Management ─────────────────────────────
+
+@router.get("/admins", dependencies=[Depends(verify_admin)], response_class=templates.TemplateResponse)
+async def admin_list(request: Request):
+    from app.models import AdminUser
+    async with get_session() as session:
+        res = await session.execute(select(AdminUser).order_by(AdminUser.created_at.desc()))
+        admins = res.scalars().all()
+    return templates.TemplateResponse(request, "admins.html", {"admins": admins, "active": "admins"})
+
+@router.post("/admins/add", dependencies=[Depends(verify_admin)])
+async def admin_add(telegram_id: str = Form(...), name: str = Form(""), permissions: list[str] = Form([])):
+    from app.models import AdminUser
+    try:
+        tid = int(telegram_id)
+        perms = ",".join(permissions)
+        async with get_session() as session:
+            existing = await session.execute(select(AdminUser).where(AdminUser.telegram_id == tid))
+            if not existing.scalar_one_or_none():
+                session.add(AdminUser(telegram_id=tid, name=name, permissions=perms))
+    except Exception as e:
+        logger.error("admin_add_error", error=str(e))
+    return RedirectResponse(url="/admin/admins", status_code=303)
+
+@router.post("/admins/delete/{admin_id}", dependencies=[Depends(verify_admin)])
+async def admin_delete(admin_id: int):
+    from app.models import AdminUser
+    async with get_session() as session:
+        admin = await session.get(AdminUser, admin_id)
+        if admin:
+            await session.delete(admin)
+    return RedirectResponse(url="/admin/admins", status_code=303)
