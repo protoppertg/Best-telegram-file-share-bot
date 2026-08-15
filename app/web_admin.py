@@ -53,6 +53,17 @@ async def get_setting(session, key: str, default: str = "") -> str:
     s = res.scalar_one_or_none()
     return s.value if s and s.value else default
 
+async def repair_database():
+    """Auto-repairs missing columns to prevent web panel crashes."""
+    async with get_session() as session:
+        await session.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_count INTEGER DEFAULT 0"))
+        await session.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_banned BOOLEAN DEFAULT false"))
+        await session.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS premium_expiry TIMESTAMP WITH TIME ZONE"))
+        await session.execute(text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS class_name VARCHAR(100)"))
+        await session.execute(text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS keywords TEXT[]"))
+        await session.execute(text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS subject VARCHAR(255)"))
+        await session.execute(text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS category VARCHAR(100)"))
+
 @router.get("/login", response_class=templates.TemplateResponse)
 async def admin_login(request: Request):
     return templates.TemplateResponse(request, "login.html", {"error": None})
@@ -71,17 +82,20 @@ async def admin_logout(request: Request):
 
 @router.get("/", dependencies=[Depends(verify_admin)], response_class=templates.TemplateResponse)
 async def admin_dashboard(request: Request):
-    async with get_session() as session:
-        stats = await user_service.get_stats(session)
-        # Fetch top 5 referrers for the chart
-        top_ref_res = await session.execute(
-            select(User.username, User.referral_count)
-            .where(User.referral_count > 0)
-            .order_by(User.referral_count.desc())
-            .limit(5)
-        )
-        top_referrers = top_ref_res.all()
-    return templates.TemplateResponse(request, "dashboard.html", {"stats": stats, "top_referrers": top_referrers, "active": "dashboard"})
+    try:
+        async with get_session() as session:
+            stats = await user_service.get_stats(session)
+            top_ref_res = await session.execute(
+                select(User.username, User.referral_count)
+                .where(User.referral_count > 0)
+                .order_by(User.referral_count.desc())
+                .limit(5)
+            )
+            top_referrers = top_ref_res.all()
+        return templates.TemplateResponse(request, "dashboard.html", {"stats": stats, "top_referrers": top_referrers, "active": "dashboard"})
+    except Exception:
+        await repair_database()
+        return RedirectResponse(url="/admin/", status_code=303)
 
 @router.get("/settings", dependencies=[Depends(verify_admin)], response_class=templates.TemplateResponse)
 async def admin_settings(request: Request):
@@ -211,8 +225,7 @@ async def _web_background_bcast(message: str, user_ids: list[int]):
             await asyncio.sleep(0.05)
         except Exception: pass
 
-
-# ── Documents (Fixed Counting Logic) ─────────────
+# ── Documents ─────────────────────
 
 @router.get("/documents", dependencies=[Depends(verify_admin)], response_class=templates.TemplateResponse)
 async def admin_documents(request: Request, page: int = 1, q: Optional[str] = None):
@@ -228,22 +241,58 @@ async def admin_documents(request: Request, page: int = 1, q: Optional[str] = No
                 
             result = await session.execute(stmt.order_by(Document.created_at.desc()).offset((page - 1) * per_page).limit(per_page))
             docs = result.scalars().all()
-            
             total = (await session.execute(count_stmt)).scalar() or 0
             
         total_pages = max(1, (total + per_page - 1) // per_page)
         return templates.TemplateResponse(request, "documents.html", {"docs": docs, "page": page, "total_pages": total_pages, "q": q, "active": "documents"})
     except Exception as e:
         logger.error("admin_documents_error", error=str(e), exc_info=True)
-        # Auto-Repair: If the database is missing a column, force add it!
-        async with get_session() as session:
-            await session.execute(text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS class_name VARCHAR(100)"))
-            await session.execute(text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS keywords TEXT[]"))
-            await session.execute(text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS subject VARCHAR(255)"))
-            await session.execute(text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS category VARCHAR(100)"))
-        
-        # Return an empty page so it doesn't crash, user just refreshes
+        await repair_database()
         return templates.TemplateResponse(request, "documents.html", {"docs": [], "page": 1, "total_pages": 1, "q": q, "active": "documents"})
+
+@router.get("/documents/edit/{doc_id}", dependencies=[Depends(verify_admin)], response_class=templates.TemplateResponse)
+async def admin_edit_doc(request: Request, doc_id: int):
+    try:
+        async with get_session() as session:
+            doc = await doc_service.get_document_by_id(session, doc_id)
+        if not doc: 
+            return RedirectResponse(url="/admin/documents?status=notfound", status_code=303)
+        return templates.TemplateResponse(request, "edit_document.html", {"doc": doc, "active": "documents"})
+    except Exception as e:
+        logger.error("admin_edit_doc_error", error=str(e), exc_info=True)
+        await repair_database()
+        return RedirectResponse(url="/admin/documents?status=error", status_code=303)
+
+@router.post("/documents/edit/{doc_id}", dependencies=[Depends(verify_admin)])
+async def admin_edit_doc_post(doc_id: int, file_name: str = Form(...), subject: str = Form(""), category: str = Form(""), class_name: str = Form(""), year: str = Form(""), keywords: str = Form(""), description: str = Form("")):
+    updates = {
+        "file_name": file_name, "subject": subject or None, "category": category or None, 
+        "class_name": class_name or None, "year": int(year) if year and year.isdigit() else None,
+        "keywords": [k.strip() for k in keywords.split(",") if k.strip()], "description": description or None
+    }
+    try:
+        async with get_session() as session:
+            await doc_service.update_document(session, doc_id, **updates)
+        return RedirectResponse(url="/admin/documents?status=updated", status_code=303)
+    except Exception as e:
+        logger.error("admin_edit_doc_post_error", error=str(e), exc_info=True)
+        return RedirectResponse(url=f"/admin/documents/edit/{doc_id}?status=error", status_code=303)
+
+@router.post("/documents/{doc_id}/approve", dependencies=[Depends(verify_admin)])
+async def admin_approve_doc(doc_id: int):
+    async with get_session() as session: await doc_service.approve_document(session, doc_id)
+    return Response(status_code=200)
+
+@router.post("/documents/{doc_id}/delete", dependencies=[Depends(verify_admin)])
+async def admin_delete_doc(doc_id: int):
+    async with get_session() as session: await doc_service.delete_document(session, doc_id)
+    return Response(status_code=200)
+
+@router.post("/documents/delete_duplicates", dependencies=[Depends(verify_admin)])
+async def admin_delete_duplicates():
+    async with get_session() as session:
+        deleted_count = await doc_service.delete_duplicates(session)
+    return RedirectResponse(url=f"/admin/documents?status=deduped&count={deleted_count}", status_code=303)
 
 # ── Users ─────────────────────────────────────────
 
@@ -253,8 +302,6 @@ async def admin_users(request: Request, page: int = 1, q: Optional[str] = None):
     try:
         async with get_session() as session:
             if q: 
-                # CRITICAL FIX: Only search by telegram_id if 'q' is a number. 
-                # This prevents the database from crashing when searching for a username like "john".
                 if q.isdigit():
                     stmt = select(User).where((User.username.ilike(f"%{q}%")) | (User.telegram_id == int(q)))
                     count_stmt = select(func.count(User.id)).where((User.username.ilike(f"%{q}%")) | (User.telegram_id == int(q)))
@@ -273,14 +320,60 @@ async def admin_users(request: Request, page: int = 1, q: Optional[str] = None):
         return templates.TemplateResponse(request, "users.html", {"users": users, "page": page, "total_pages": total_pages, "q": q, "active": "users"})
     except Exception as e:
         logger.error("admin_users_error", error=str(e), exc_info=True)
-        # Return empty page on error to prevent 500 Internal Server Error
+        await repair_database()
         return templates.TemplateResponse(request, "users.html", {"users": [], "page": 1, "total_pages": 1, "q": q, "active": "users"})
-        
-# ── Automated Cleanup Tools ─────────────────────
+
+@router.get("/users/{telegram_id}", dependencies=[Depends(verify_admin)], response_class=templates.TemplateResponse)
+async def admin_user_profile(request: Request, telegram_id: int):
+    try:
+        async with get_session() as session:
+            user = await session.execute(select(User).where(User.telegram_id == telegram_id))
+            user = user.scalar_one_or_none()
+            
+        if not user: 
+            return RedirectResponse(url="/admin/users?status=notfound", status_code=303)
+            
+        return templates.TemplateResponse(request, "user_profile.html", {"u": user, "active": "users"})
+    except Exception as e:
+        logger.error("admin_user_profile_error", error=str(e), exc_info=True)
+        await repair_database()
+        return RedirectResponse(url="/admin/users?status=error", status_code=303)
+
+@router.post("/users/{telegram_id}/send_message", dependencies=[Depends(verify_admin)])
+async def admin_send_dm(telegram_id: int, message: str = Form(...)):
+    try: await bot.send_message(telegram_id, message)
+    except Exception as e: logger.error("web_dm_failed", user_id=telegram_id, error=str(e))
+    return RedirectResponse(url=f"/admin/users/{telegram_id}?status=sent", status_code=303)
+
+@router.post("/users/{telegram_id}/grant_premium", dependencies=[Depends(verify_admin)])
+async def admin_grant_premium(telegram_id: int, days: int = Form(30)):
+    await user_service.activate_premium(telegram_id, days)
+    return RedirectResponse(url=f"/admin/users/{telegram_id}", status_code=303)
+
+@router.post("/users/{telegram_id}/revoke_premium", dependencies=[Depends(verify_admin)])
+async def admin_revoke_premium(telegram_id: int):
+    await user_service.revoke_premium(telegram_id)
+    return RedirectResponse(url=f"/admin/users/{telegram_id}", status_code=303)
+
+@router.post("/users/{telegram_id}/ban", dependencies=[Depends(verify_admin)])
+async def admin_ban_user(telegram_id: int):
+    await user_service.ban_user(telegram_id)
+    return RedirectResponse(url=f"/admin/users/{telegram_id}", status_code=303)
+
+@router.post("/users/{telegram_id}/unban", dependencies=[Depends(verify_admin)])
+async def admin_unban_user(telegram_id: int):
+    await user_service.unban_user(telegram_id)
+    return RedirectResponse(url=f"/admin/users/{telegram_id}", status_code=303)
+
+@router.post("/users/{telegram_id}/reset_search", dependencies=[Depends(verify_admin)])
+async def admin_reset_search(telegram_id: int):
+    await user_service.reset_search_count(telegram_id)
+    return RedirectResponse(url=f"/admin/users/{telegram_id}", status_code=303)
+
+# ── Automated Cleanup & Maintenance Tools ─────────
 
 @router.get("/deep_clean", dependencies=[Depends(verify_admin)])
 async def deep_clean():
-    """Deletes broken rows, empty rows, and exact duplicate file_ids."""
     async with get_session() as session:
         await session.execute(text("DELETE FROM documents WHERE file_id IS NULL OR file_name IS NULL OR file_name = ''"))
         await session.execute(text("""
@@ -291,31 +384,44 @@ async def deep_clean():
                 GROUP BY file_id
             )
         """))
-        
-    return "✅ Deep Clean Complete! Broken files and duplicates removed. Please hard-refresh your browser (Ctrl+F5)."
+    return "✅ Deep Clean Complete! Broken files and duplicates removed."
 
 @router.get("/fix_sequence", dependencies=[Depends(verify_admin)])
 async def fix_sequence():
-    """Resets the database ID counter so the next upload is exactly +1 from the current max ID."""
-    from sqlalchemy import text
     async with get_session() as session:
         await session.execute(text("SELECT setval(pg_get_serial_sequence('documents', 'id'), (SELECT MAX(id) FROM documents));"))
+    return "✅ Success! The ID counter has been reset."
+
+@router.get("/update_keyboards", dependencies=[Depends(verify_admin)])
+async def update_keyboards():
+    from app.utils.keyboards import main_menu_kb
+    async with get_session() as session:
+        prem_res = await session.execute(select(BotSetting).where(BotSetting.key == "premium_enabled"))
+        prem_setting = prem_res.scalar_one_or_none()
+        show_prem = not (prem_setting and prem_setting.value == "false")
+
+        result = await session.execute(select(User.telegram_id).where(User.is_banned == False))
+        user_ids = result.scalars().all()
         
-    return "✅ Success! The ID counter has been reset. The next file you upload will be exactly +1 from your highest current ID."
+    sent_count = 0
+    failed_count = 0
+    for uid in user_ids:
+        try:
+            await bot.send_message(uid, "✨ <b>PrepCore just got an update!</b>\n\nWe've added a new <b>Referral Program</b>! Check out the new menu button below to invite your friends and earn extra daily searches. 🎁", reply_markup=main_menu_kb(show_premium=show_prem))
+            sent_count += 1
+            await asyncio.sleep(0.05)
+        except Exception:
+            failed_count += 1
+    return f"✅ Success! Sent the new keyboard to {sent_count} users. ({failed_count} failed/blocked)."
 
 # ── Database Migration Tool ─────────────────────
 
 @router.get("/migrate", dependencies=[Depends(verify_admin)])
 async def migrate_data():
-    """Temporary route to copy data from Render to Supabase (Fast Bulk Version)."""
     old_url = settings.DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")
     new_url = os.environ.get("NEW_DATABASE_URL")
-    
-    if not new_url:
-        return "Error: NEW_DATABASE_URL is not set in Render environment."
-        
-    if "sslmode" not in new_url:
-        new_url += "?sslmode=require"
+    if not new_url: return "Error: NEW_DATABASE_URL is not set."
+    if "sslmode" not in new_url: new_url += "?sslmode=require"
 
     try:
         old_conn = await asyncpg.connect(old_url)
@@ -328,7 +434,7 @@ async def migrate_data():
             id SERIAL PRIMARY KEY, telegram_id BIGINT UNIQUE NOT NULL, username VARCHAR(255),
             first_name VARCHAR(255), last_name VARCHAR(255), is_premium BOOLEAN DEFAULT false,
             premium_expiry TIMESTAMP WITH TIME ZONE, is_banned BOOLEAN DEFAULT false,
-            search_count INTEGER DEFAULT 0, upload_count INTEGER DEFAULT 0,
+            search_count INTEGER DEFAULT 0, upload_count INTEGER DEFAULT 0, referral_count INTEGER DEFAULT 0,
             last_reset_date DATE DEFAULT CURRENT_DATE, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
             updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
         );
@@ -366,39 +472,4 @@ async def migrate_data():
 
     await old_conn.close()
     await new_conn.close()
-    
     return f"✅ Success! Copied {len(users)} users, {len(docs)} documents, and {len(settings_row)} settings to the new database."
-
-# ── Force Update All User Keyboards ─────────────
-
-@router.get("/update_keyboards", dependencies=[Depends(verify_admin)])
-async def update_keyboards():
-    """Forces the new main menu keyboard to all users."""
-    from app.utils.keyboards import main_menu_kb
-    from sqlalchemy import select as sql_select
-    
-    async with get_session() as session:
-        # Check if premium is enabled
-        prem_res = await session.execute(sql_select(BotSetting).where(BotSetting.key == "premium_enabled"))
-        prem_setting = prem_res.scalar_one_or_none()
-        show_prem = not (prem_setting and prem_setting.value == "false")
-
-        # Get all users
-        result = await session.execute(sql_select(User.telegram_id).where(User.is_banned == False))
-        user_ids = result.scalars().all()
-        
-    sent_count = 0
-    failed_count = 0
-    for uid in user_ids:
-        try:
-            await bot.send_message(
-                uid, 
-                "✨ <b>PrepCore just got an update!</b>\n\nWe've added a new <b>Referral Program</b>! Check out the new menu button below to invite your friends and earn extra daily searches. 🎁",
-                reply_markup=main_menu_kb(show_premium=show_prem)
-            )
-            sent_count += 1
-            await asyncio.sleep(0.05)
-        except Exception:
-            failed_count += 1
-            
-    return f"✅ Success! Sent the new keyboard to {sent_count} users. ({failed_count} failed/blocked)."
