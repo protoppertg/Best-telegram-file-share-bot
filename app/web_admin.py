@@ -403,6 +403,36 @@ async def admin_add(request: Request, telegram_id: str = Form(...), name: str = 
         await repair_database()
     return RedirectResponse(url="/admin/admins", status_code=303)
 
+@router.get("/admins/edit/{admin_id}", dependencies=[Depends(verify_admin)], response_class=templates.TemplateResponse)
+async def admin_edit(request: Request, admin_id: int):
+    if "admins" not in request.state.perms:
+        return RedirectResponse(url="/admin/?status=unauthorized", status_code=303)
+    try:
+        async with get_session() as session:
+            admin = await session.get(AdminUser, admin_id)
+        if not admin:
+            return RedirectResponse(url="/admin/admins", status_code=303)
+        return templates.TemplateResponse(request, "admin_edit.html", {"admin": admin, "active": "admins"})
+    except Exception:
+        await repair_database()
+        return RedirectResponse(url="/admin/admins", status_code=303)
+
+@router.post("/admins/edit/{admin_id}", dependencies=[Depends(verify_admin)])
+async def admin_edit_post(request: Request, admin_id: int, name: str = Form(""), password: str = Form(""), permissions: list[str] = Form([])):
+    if "admins" not in request.state.perms:
+        return RedirectResponse(url="/admin/?status=unauthorized", status_code=303)
+    try:
+        async with get_session() as session:
+            admin = await session.get(AdminUser, admin_id)
+            if admin:
+                admin.name = name
+                if password: # Only update the password if a new one was typed
+                    admin.password = password
+                admin.permissions = ",".join(permissions)
+    except Exception as e:
+        logger.error("admin_edit_error", error=str(e))
+    return RedirectResponse(url="/admin/admins", status_code=303)
+    
 @router.post("/admins/delete/{admin_id}", dependencies=[Depends(verify_admin)])
 async def admin_delete(request: Request, admin_id: int):
     if "admins" not in request.state.perms:
