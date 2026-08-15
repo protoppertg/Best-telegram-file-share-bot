@@ -425,14 +425,18 @@ async def migrate_data():
 async def update_keyboards():
     """Forces the new main menu keyboard to all users."""
     from app.utils.keyboards import main_menu_kb
-    from app.services.user import _is_premium_enabled
+    from sqlalchemy import select as sql_select
     
     async with get_session() as session:
-        result = await session.execute(select(User.telegram_id).where(User.is_banned == False))
+        # Check if premium is enabled
+        prem_res = await session.execute(sql_select(BotSetting).where(BotSetting.key == "premium_enabled"))
+        prem_setting = prem_res.scalar_one_or_none()
+        show_prem = not (prem_setting and prem_setting.value == "false")
+
+        # Get all users
+        result = await session.execute(sql_select(User.telegram_id).where(User.is_banned == False))
         user_ids = result.scalars().all()
         
-    show_prem = await _is_premium_enabled()
-    
     sent_count = 0
     failed_count = 0
     for uid in user_ids:
