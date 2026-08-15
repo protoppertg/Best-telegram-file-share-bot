@@ -29,12 +29,6 @@ from app.utils.validators import is_valid_search_query, parse_keywords, parse_ye
 
 router = Router()
 
-# Verified Telegram Custom Animated Emoji IDs
-E_FIRE = "5377636793787918554"
-E_ROCKET = "5377636793939500266"
-E_STAR = "5377596903241758841"
-E_PARTY = "5376345424831346771"
-
 class UploadStates(StatesGroup):
     waiting_file_name = State()
     waiting_subject = State()
@@ -63,7 +57,7 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
                     if not existing_user.scalar_one_or_none():
                         await user_service.add_referral(ref_id)
                         try:
-                            await message.bot.send_message(ref_id, f'<tg-emoji emoji-id="{E_PARTY}">🎉</tg-emoji> <b>New Referral!</b>\nSomeone joined using your link. You earned a reward!')
+                            await message.bot.send_message(ref_id, "🎉 <b>New Referral!</b>\nSomeone joined using your link. You earned a reward!")
                         except Exception:
                             pass
 
@@ -72,16 +66,16 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
         text_setting = text_setting.scalar_one_or_none()
         
     default_text = (
-        f'<tg-emoji emoji-id="{E_FIRE}">✨</tg-emoji> <b>Welcome to PrepCore!</b> <tg-emoji emoji-id="{E_FIRE}">✨</tg-emoji>\n'
+        "✨ <b>Welcome to PrepCore!</b> ✨\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        f'📚 Your ultimate library for study materials.\n'
+        "📚 Your ultimate library for study materials.\n"
         "Find notes, PYQs, and books in seconds!\n\n"
-        f'🛠 <b>How to use me:</b>\n'
+        "🛠 <b>How to use me:</b>\n"
         "┣👉 <b>Search:</b> Type keywords or use advanced filters.\n"
         "┣👉 <b>Upload:</b> Send a PDF to support the community.\n"
         "┣👉 <b>Referral:</b> Invite friends to earn extra searches!\n"
         "┗👉 <b>Premium:</b> Unlock unlimited searches & ad-free downloads.\n\n"
-        f'<i>Ready to dive in? Just type a keyword below!</i> <tg-emoji emoji-id="{E_ROCKET}">🚀</tg-emoji>'
+        "<i>Ready to dive in? Just type a keyword below!</i> 🚀"
     )
     text = text_setting.value if text_setting and text_setting.value else default_text
     
@@ -106,16 +100,16 @@ async def cmd_referral(message: Message, db_user: User | None = None):
         r_amount = int(r_amount_val) if r_amount_val and r_amount_val.isdigit() else 1
 
     if r_type == "premium":
-        reward_text = f'<tg-emoji emoji-id="{E_STAR}">⭐</tg-emoji> <b>{r_amount} Day(s) of Premium</b>\n🚀 Unlock unlimited searches & ad-free downloads!'
+        reward_text = f"⭐ <b>{r_amount} Day(s) of Premium</b>\n🚀 Unlock unlimited searches & ad-free downloads!"
     elif r_type == "daily_bonus":
-        reward_text = f'<tg-emoji emoji-id="{E_FIRE}">⚡</tg-emoji> <b>+{r_amount} Bonus Searches Today</b>\n🔢 Get extra searches instantly for today!'
+        reward_text = f"⚡ <b>+{r_amount} Bonus Searches Today</b>\n🔢 Get extra searches instantly for today!"
     else:
-        reward_text = f'<tg-emoji emoji-id="{E_FIRE}">🔍</tg-emoji> <b>+{r_amount} Permanent Daily Searches</b>\n📈 Permanently increase your daily search limit!'
+        reward_text = f"🔍 <b>+{r_amount} Permanent Daily Searches</b>\n📈 Permanently increase your daily search limit!"
 
     text = (
-        f'🤝 <b>Refer & Earn Program</b>\n'
+        "🤝 <b>Refer & Earn Program</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        f'Invite your friends to PrepCore and earn amazing rewards for every successful referral! <tg-emoji emoji-id="{E_PARTY}">🎁</tg-emoji>\n\n'
+        "Invite your friends to PrepCore and earn amazing rewards for every successful referral! 🎁\n\n"
         f"🎯 <b>Reward Per Referral:</b>\n{reward_text}\n\n"
         f"📊 <b>Your Statistics:</b>\n"
         f"👥 Total Referrals: <b>{db_user.referral_count}</b>\n\n"
@@ -134,14 +128,14 @@ async def cmd_referral(message: Message, db_user: User | None = None):
 @router.message(Command("help"))
 async def cmd_help(message: Message):
     text = (
-        f'📖 <b>Help & Guide</b>\n\n'
-        f'🔍 <b>Basic Search:</b>\n'
+        "📖 <b>Help & Guide</b>\n\n"
+        "🔍 <b>Basic Search:</b>\n"
         "Just type what you're looking for (e.g., <code>physics notes</code>).\n\n"
-        f'<tg-emoji emoji-id="{E_ROCKET}">🚀</tg-emoji> <b>Advanced Search:</b>\n'
+        "🚀 <b>Advanced Search:</b>\n"
         "Use filters to narrow down results instantly!\n"
         "<code>math subject:Physics class:Class 10 year:2023</code>\n\n"
         "📤 <b>Upload:</b> Send a PDF to support the library.\n"
-        f'<tg-emoji emoji-id="{E_STAR}">🎟️</tg-emoji> <b>Premium:</b> Get unlimited searches and ad-free downloads.'
+        "🎟️ <b>Premium:</b> Get unlimited searches and ad-free downloads."
     )
     await message.answer(text)
 
@@ -194,7 +188,7 @@ async def cmd_premium(message: Message, db_user: User | None = None):
         status = "❌ <b>Not active</b>"
 
     default_text = (
-        f'<tg-emoji emoji-id="{E_STAR}">🎟️</tg-emoji> <b>Premium Status</b>\n\n'
+        f"🎟️ <b>Premium Status</b>\n\n"
         f"Status: {status}\n\n"
         f"<b>Premium Benefits:</b>\n"
         f"• Unlimited searches per day\n"
