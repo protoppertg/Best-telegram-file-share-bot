@@ -244,15 +244,19 @@ async def admin_documents(request: Request, page: int = 1, q: Optional[str] = No
             else: 
                 stmt = select(Document)
                 count_stmt = select(func.count(Document.id))
-            result = await session.execute(stmt.order_by(Document.created_at.desc()).offset((page - 1) * per_page).limit(per_page))
+                
+            # Changed to order by Document.id.desc() for perfect chronological sorting
+            result = await session.execute(stmt.order_by(Document.id.desc()).offset((page - 1) * per_page).limit(per_page))
             docs = result.scalars().all()
+            
             total = (await session.execute(count_stmt)).scalar() or 0
+            
         total_pages = max(1, (total + per_page - 1) // per_page)
         return templates.TemplateResponse(request, "documents.html", {"docs": docs, "page": page, "total_pages": total_pages, "q": q, "active": "documents"})
     except Exception:
         await repair_database()
         return templates.TemplateResponse(request, "documents.html", {"docs": [], "page": 1, "total_pages": 1, "q": q, "active": "documents"})
-
+        
 @router.get("/documents/edit/{doc_id}", dependencies=[Depends(verify_admin)], response_class=templates.TemplateResponse)
 async def admin_edit_doc(request: Request, doc_id: int):
     if "documents" not in request.state.perms:
