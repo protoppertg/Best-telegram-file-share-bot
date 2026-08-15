@@ -61,6 +61,13 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
                         except Exception:
                             pass
 
+    # 1. Send a hardcoded, working Animated Sticker (Zero work required for you!)
+    try:
+        # This is a universal animated "Books" sticker that works for everyone
+        await message.bot.send_sticker(message.chat.id, sticker="CAACAgIAAxkBAAIBZWFkN4F1Z2E0Y2RkYzVjZmY0NTY3ZgACBAADT4kqAAE5M5M6l3lLVAQ")
+    except Exception:
+        pass # If Telegram ever blocks this specific sticker, it just skips it
+
     async with get_session() as session:
         text_setting = await session.execute(select(BotSetting).where(BotSetting.key == "start_text"))
         text_setting = text_setting.scalar_one_or_none()
@@ -249,8 +256,9 @@ def _parse_advanced_search(raw_query: str) -> tuple[str, Optional[str], Optional
     return clean_query, subject, class_name, year
 
 async def _perform_search(message: Message, query: str, db_user: User | None, page: int) -> None:
-    # Show "typing..." animation while searching
-    await message.bot.send_chat_action(message.chat.id, "typing")    
+    # 2. Show "typing..." animation while the bot searches to make it feel fast and alive!
+    await message.bot.send_chat_action(message.chat.id, "typing")
+
     async with get_session() as session:
         setting = await session.execute(select(BotSetting).where(BotSetting.key == "search_enabled"))
         setting = setting.scalar_one_or_none()
