@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="flex justify-between items-center mb-8">
+    <div>
+        <h1 class="text-3xl font-bold text-gray-900">Edit Admin</h1>
+        <p class="text-gray-500 mt-1">Update name, password, or permissions.</p>
+    </div>
+    <a href="/admin/admins" class="bg-gray-100 text-gray-700 px-4 py-2 rounded-xl hover:bg-gray-200 transition">Back to Admins</a>
+</div>
+
+<div class="bg-white p-8 rounded-2xl shadow-sm border border-gray-100 max-w-2xl">
+    <form method="POST" action="/admin/admins/edit/{{ admin.id }}" class="space-y-6">
+        
+        <div>
+            <label class="block text-gray-700 text-sm font-bold mb-2">Telegram ID</label>
+            <input type="text" value="{{ admin.telegram_id }}" disabled class="w-full bg-gray-100 border border-gray-200 p-3 rounded-xl text-gray-500">
+            <p class="text-gray-500 text-sm mt-1">The Telegram ID cannot be changed.</p>
+        </div>
+        
+        <div>
+            <label class="block text-gray-700 text-sm font-bold mb-2">Name</label>
+            <input type="text" name="name" value="{{ admin.name or '' }}" class="w-full border border-gray-200 p-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition" placeholder="John Doe">
+        </div>
+        
+        <div>
+            <label class="block text-gray-700 text-sm font-bold mb-2">New Login Password</label>
+            <input type="text" name="password" class="w-full border border-gray-200 p-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition" placeholder="Leave blank to keep current password">
+            <p class="text-gray-500 text-sm mt-1">Type a new password here only if you want to change it.</p>
+        </div>
+        
+        <div>
+            <label class="block text-gray-700 text-sm font-bold mb-3">Permissions</label>
+            <div class="grid grid-cols-2 gap-3">
+                {% set current_perms = admin.permissions.split(',') if admin.permissions else [] %}
+                
+                <label class="flex items-center space-x-2 p-3 bg-gray-50 rounded-xl cursor-pointer">
+                    <input type="checkbox" name="permissions" value="stats" class="rounded text-blue-500 focus:ring-blue-400" {% if 'stats' in current_perms %}checked{% endif %}>
+                    <span class="text-sm">View Stats</span>
+                </label>
+                <label class="flex items-center space-x-2 p-3 bg-gray-50 rounded-xl cursor-pointer">
+                    <input type="checkbox" name="permissions" value="users" class="rounded text-blue-500 focus:ring-blue-400" {% if 'users' in current_perms %}checked{% endif %}>
+                    <span class="text-sm">Manage Users</span>
+                </label>
+                <label class="flex items-center space-x-2 p-3 bg-gray-50 rounded-xl cursor-pointer">
+                    <input type="checkbox" name="permissions" value="documents" class="rounded text-blue-500 focus:ring-blue-400" {% if 'documents' in current_perms %}checked{% endif %}>
+                    <span class="text-sm">Manage Docs</span>
+                </label>
+                <label class="flex items-center space-x-2 p-3 bg-gray-50 rounded-xl cursor-pointer">
+                    <input type="checkbox" name="permissions" value="broadcast" class="rounded text-blue-500 focus:ring-blue-400" {% if 'broadcast' in current_perms %}checked{% endif %}>
+                    <span class="text-sm">Broadcast</span>
+                </label>
+                <label class="flex items-center space-x-2 p-3 bg-gray-50 rounded-xl cursor-pointer">
+                    <input type="checkbox" name="permissions" value="forcesub" class="rounded text-blue-500 focus:ring-blue-400" {% if 'forcesub' in current_perms %}checked{% endif %}>
+                    <span class="text-sm">Settings/ForceSub</span>
+                </label>
+            </div>
+        </div>
+        
+        <button type="submit" class="bg-blue-500 text-white px-6 py-2.5 rounded-xl hover:bg-blue-600 transition shadow-sm">Save Changes</button>
+    </form>
+</div>
+{% endblock %}
