@@ -111,6 +111,15 @@ async def _send_file_to_user(bot: Bot, callback: CallbackQuery, doc, bot_setting
     protect = bot_settings["protect_forwarding"]
     post_file_msg = bot_settings["post_file_message"]
     
+    # 1. Send a premium "Receipt" message while the file is being fetched
+    receipt_text = (
+        f"📥 <b>Preparing your file...</b>\n"
+        f"📁 <code>{escape(sanitise_text(doc.file_name, 80))}</code>\n"
+        f"📚 {escape(doc.subject or 'N/A')} | 🏷️ {escape(doc.category or 'N/A')}"
+    )
+    receipt_msg = await bot.send_message(chat_id=callback.from_user.id, text=receipt_text)
+    
+    # 2. Send the actual file
     caption_parts = []
     if doc.subject: caption_parts.append(f"📚 {escape(doc.subject)}")
     if doc.category: caption_parts.append(f"🏷️ {escape(doc.category)}")
@@ -121,6 +130,12 @@ async def _send_file_to_user(bot: Bot, callback: CallbackQuery, doc, bot_setting
     )
 
     msg_ids_to_delete = [sent_file_msg.message_id]
+
+    # 3. Edit the receipt message to show success
+    try:
+        await receipt_msg.delete()
+    except Exception:
+        pass
 
     if post_file_msg:
         try:
@@ -134,7 +149,7 @@ async def _send_file_to_user(bot: Bot, callback: CallbackQuery, doc, bot_setting
             asyncio.create_task(_schedule_auto_delete(bot, callback.from_user.id, msg_id, ad_seconds))
 
     try:
-        await callback.message.edit_text(f"✅ File sent successfully.", reply_markup=after_file_keyboard(query_key, page))
+        await callback.message.edit_text(f"✅ <b>File sent successfully.</b>", reply_markup=after_file_keyboard(query_key, page))
     except TelegramBadRequest: pass
 
 @router.callback_query(F.data.startswith("getfile:"))
