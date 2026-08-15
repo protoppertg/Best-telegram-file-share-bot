@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -44,6 +44,7 @@ async def reset_daily_counts_if_needed(session: AsyncSession, user: User) -> boo
 
 async def get_user_search_limit(user: User) -> int:
     async with get_session() as session:
+        # OPTIMIZED: Fetch all settings in one single DB query
         res = await session.execute(select(BotSetting).where(BotSetting.key.in_([
             "premium_enabled", "free_search_limit", "premium_search_limit", "referral_reward_type", "referral_reward_amount"
         ])))
@@ -76,27 +77,27 @@ async def check_search_limit(user: User) -> bool:
 async def check_upload_limit(user: User) -> bool:
     return user.upload_count < await get_user_upload_limit(user)
 
-async def increment_search_count(session: AsyncSession, telegram_id: int) -> None:
+async def increment_search_count(telegram_id: int) -> None:
+    # ULTRA-FAST ATOMIC UPDATE: No need to load the user object, just increment directly in DB
     try:
-        result = await session.execute(select(User).where(User.telegram_id == telegram_id))
-        user = result.scalar_one_or_none()
-        if user:
-            user.search_count += 1
-            await session.flush()
+        async with get_session() as session:
+            await session.execute(
+                text("UPDATE users SET search_count = search_count + 1 WHERE telegram_id = :tid"),
+                {"tid": telegram_id}
+            )
     except Exception as e:
         logger.error("increment_search_error", error=str(e))
-        await session.rollback()
 
-async def increment_upload_count(session: AsyncSession, telegram_id: int) -> None:
+async def increment_upload_count(telegram_id: int) -> None:
+    # ULTRA-FAST ATOMIC UPDATE: No need to load the user object, just increment directly in DB
     try:
-        result = await session.execute(select(User).where(User.telegram_id == telegram_id))
-        user = result.scalar_one_or_none()
-        if user:
-            user.upload_count += 1
-            await session.flush()
+        async with get_session() as session:
+            await session.execute(
+                text("UPDATE users SET upload_count = upload_count + 1 WHERE telegram_id = :tid"),
+                {"tid": telegram_id}
+            )
     except Exception as e:
         logger.error("increment_upload_error", error=str(e))
-        await session.rollback()
 
 async def add_referral(telegram_id: int):
     async with get_session() as session:
