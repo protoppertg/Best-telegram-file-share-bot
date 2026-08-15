@@ -21,7 +21,7 @@
     <aside class="w-64 glass border-r border-gray-200/50 min-h-screen flex flex-col fixed">
         <div class="p-6 text-xl font-bold text-gray-900 border-b border-gray-200/50">📚 PrepCore</div>
         <nav class="flex-1 p-4 space-y-1">
-            {% set perms = request.state.perms %}
+            {% set perms = request.session.get('perms', []) %}
             
             {% if 'stats' in perms or 'admins' in perms %}
             <a href="/admin/" class="flex items-center space-x-3 py-2.5 px-4 rounded-xl transition {{ 'bg-blue-500 text-white shadow-sm' if active == 'dashboard' else 'text-gray-600 hover:bg-gray-200/50' }}">
