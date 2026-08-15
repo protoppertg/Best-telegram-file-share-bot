@@ -12,6 +12,7 @@ from aiogram.filters import Command, CommandObject, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy import select
 
 from app.config import settings
@@ -106,21 +107,32 @@ async def cmd_referral(message: Message, db_user: User | None = None):
         r_amount_val = s_dict.get("referral_reward_amount") or "1"
         r_amount = int(r_amount_val) if r_amount_val and r_amount_val.isdigit() else 1
 
+    # Build the reward text based on admin settings
     if r_type == "premium":
-        reward_text = f"<b>{r_amount} Days of Premium</b>"
+        reward_text = f"⭐ <b>{r_amount} Day(s) of Premium</b>\n🚀 Unlock unlimited searches & ad-free downloads!"
     elif r_type == "daily_bonus":
-        reward_text = f"<b>+{r_amount} Bonus Searches Today</b>"
+        reward_text = f"⚡ <b>+{r_amount} Bonus Searches Today</b>\n🔢 Get extra searches instantly for today!"
     else:
-        reward_text = f"<b>+{r_amount} Permanent Daily Searches</b>"
+        reward_text = f"🔍 <b>+{r_amount} Permanent Daily Searches</b>\n📈 Permanently increase your daily search limit!"
 
     text = (
-        "🤝 <b>Referral Program</b>\n\n"
-        f"Invite your friends using your link and earn rewards!\n"
-        f"Reward per referral: {reward_text}\n\n"
-        f"Your Referrals: <b>{db_user.referral_count}</b>\n\n"
-        f"🔗 <b>Your Link:</b>\n<code>{ref_link}</code>"
+        "🤝 <b>Refer & Earn Program</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Invite your friends to PrepCore and earn amazing rewards for every successful referral! 🎁\n\n"
+        f"🎯 <b>Reward Per Referral:</b>\n{reward_text}\n\n"
+        f"📊 <b>Your Statistics:</b>\n"
+        f"👥 Total Referrals: <b>{db_user.referral_count}</b>\n\n"
+        "🔗 <b>Your Unique Referral Link:</b>\n"
+        f"<code>{ref_link}</code>\n\n"
+        "<i>👉 Tap the link above to copy it, then share it with your friends. When they join, your reward is added automatically!</i>"
     )
-    await message.answer(text)
+    
+    # Add a quick share button
+    kb = InlineKeyboardBuilder()
+    share_text = f"📚 Join PrepCore! The ultimate library for study materials. Search for notes, PYQs, and books instantly!"
+    kb.button(text="📤 Share Link", url=f"https://t.me/share/url?url={ref_link}&text={share_text}")
+    
+    await message.answer(text, reply_markup=kb.as_markup())
 
 
 @router.message(F.text == "❓ Help")
