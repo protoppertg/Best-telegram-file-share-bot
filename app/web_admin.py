@@ -418,3 +418,33 @@ async def migrate_data():
     await new_conn.close()
     
     return f"✅ Success! Copied {len(users)} users, {len(docs)} documents, and {len(settings_row)} settings to the new database."
+
+# ── Force Update All User Keyboards ─────────────
+
+@router.get("/update_keyboards", dependencies=[Depends(verify_admin)])
+async def update_keyboards():
+    """Forces the new main menu keyboard to all users."""
+    from app.utils.keyboards import main_menu_kb
+    from app.services.user import _is_premium_enabled
+    
+    async with get_session() as session:
+        result = await session.execute(select(User.telegram_id).where(User.is_banned == False))
+        user_ids = result.scalars().all()
+        
+    show_prem = await _is_premium_enabled()
+    
+    sent_count = 0
+    failed_count = 0
+    for uid in user_ids:
+        try:
+            await bot.send_message(
+                uid, 
+                "✨ <b>PrepCore just got an update!</b>\n\nWe've added a new <b>Referral Program</b>! Check out the new menu button below to invite your friends and earn extra daily searches. 🎁",
+                reply_markup=main_menu_kb(show_premium=show_prem)
+            )
+            sent_count += 1
+            await asyncio.sleep(0.05)
+        except Exception:
+            failed_count += 1
+            
+    return f"✅ Success! Sent the new keyboard to {sent_count} users. ({failed_count} failed/blocked)."
