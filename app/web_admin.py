@@ -17,7 +17,7 @@ from sqlalchemy import select, func, text
 from app.config import settings
 from app.database import get_session
 from app.bot import bot
-from app.models import AdminUser, BotSetting, User, Document
+from app.models import AdminUser, AuditLog, BotSetting, User, Document
 from app.services import user as user_service
 from app.services import document as doc_service
 from app.utils.logger import logger
@@ -33,9 +33,19 @@ SUPER_PERMS = ["stats", "users", "documents", "broadcast", "forcesub", "admins"]
 async def verify_admin(request: Request):
     if not request.session.get("is_admin"):
         raise HTTPException(status_code=303, headers={"Location": "/admin/login"})
-    # Attach permissions to request state so templates can use them
     request.state.perms = request.session.get("perms", [])
     return True
+
+async def log_admin_action(request: Request, action: str, target: str = ""):
+    """Helper to safely log admin actions"""
+    try:
+        admin_id = request.session.get("is_admin", "unknown")
+        admin_name = "Super Admin" if admin_id == "super" else "Sub-Admin"
+        async with get_session() as session:
+            log = AuditLog(admin_id=str(admin_id), admin_name=admin_name, action=action, target=target)
+            session.add(log)
+    except Exception as e:
+        logger.error("audit_log_error", error=str(e))
 
 async def get_force_sub_channels(session) -> list[dict]:
     res = await session.execute(select(BotSetting).where(BotSetting.key == "force_sub_channels"))
@@ -72,13 +82,11 @@ async def admin_login(request: Request):
 
 @router.post("/login")
 async def admin_login_post(request: Request, password: str = Form(...)):
-    # 1. Check Super Admin
     if password == settings.WEB_ADMIN_PASSWORD:
         request.session["is_admin"] = "super"
         request.session["perms"] = SUPER_PERMS
         return RedirectResponse(url="/admin/", status_code=303)
         
-    # 2. Check Sub-Admins
     try:
         async with get_session() as session:
             res = await session.execute(select(AdminUser).where(AdminUser.password == password))
@@ -88,7 +96,7 @@ async def admin_login_post(request: Request, password: str = Form(...)):
                 request.session["perms"] = [p.strip() for p in admin.permissions.split(",")]
                 return RedirectResponse(url="/admin/", status_code=303)
     except Exception:
-        await repair_database() # Auto-repair if table missing
+        await repair_database()
         
     return templates.TemplateResponse(request, "login.html", {"error": "Invalid password"})
 
@@ -118,7 +126,6 @@ async def admin_dashboard(request: Request):
 async def admin_settings(request: Request):
     if "forcesub" not in request.state.perms:
         return RedirectResponse(url="/admin/?status=unauthorized", status_code=303)
-        
     async with get_session() as session:
         search_enabled = await get_setting(session, "search_enabled", "true")
         ad_enabled = await get_setting(session, "auto_delete_enabled", "false")
@@ -153,7 +160,6 @@ async def admin_settings(request: Request):
 async def admin_settings_post(request: Request, search_enabled: str = Form("off"), auto_delete_enabled: str = Form("off"), auto_delete_seconds: str = Form("3600"), protect_forwarding: str = Form("off"), post_file_message: str = Form(""), start_text: str = Form(""), about_text: str = Form(""), premium_text: str = Form(""), premium_enabled: str = Form("off"), free_search_limit: str = Form("5"), prem_search_limit: str = Form("100"), shortlink_enabled: str = Form("off"), shortlink_api_url: str = Form(""), shortlink_api_key: str = Form(""), referral_reward_type: str = Form("searches"), referral_reward_amount: str = Form("1")):
     if "forcesub" not in request.state.perms:
         return RedirectResponse(url="/admin/?status=unauthorized", status_code=303)
-        
     try:
         async with get_session() as session:
             async def save_setting(key: str, value: str):
@@ -178,26 +184,29 @@ async def admin_settings_post(request: Request, search_enabled: str = Form("off"
             await save_setting("shortlink_api_key", shortlink_api_key)
             await save_setting("referral_reward_type", referral_reward_type or "searches")
             await save_setting("referral_reward_amount", referral_reward_amount if referral_reward_amount and referral_reward_amount.isdigit() else "1")
+        await log_admin_action(request, "Updated Bot Settings")
         return RedirectResponse(url="/admin/settings", status_code=303)
     except Exception as e:
         logger.error("web_settings_save_failed", error=str(e), exc_info=True)
         return RedirectResponse(url="/admin/settings?status=error", status_code=303)
 
 @router.post("/settings/fs_add", dependencies=[Depends(verify_admin)])
-async def admin_settings_fs_add(channel_id: str = Form(...), invite_link: str = Form(...)):
+async def admin_settings_fs_add(request: Request, channel_id: str = Form(...), invite_link: str = Form(...)):
     async with get_session() as session:
         channels = await get_force_sub_channels(session)
         channels.append({"id": channel_id.strip(), "link": invite_link.strip()})
         await save_force_sub_channels(session, channels)
+    await log_admin_action(request, "Added Force Sub Channel", channel_id)
     return RedirectResponse(url="/admin/settings", status_code=303)
 
 @router.post("/settings/fs_delete/{index}", dependencies=[Depends(verify_admin)])
-async def admin_settings_fs_delete(index: int):
+async def admin_settings_fs_delete(request: Request, index: int):
     async with get_session() as session:
         channels = await get_force_sub_channels(session)
         if 0 <= index < len(channels):
             channels.pop(index)
             await save_force_sub_channels(session, channels)
+    await log_admin_action(request, "Removed Force Sub Channel")
     return RedirectResponse(url="/admin/settings", status_code=303)
 
 @router.get("/broadcast", dependencies=[Depends(verify_admin)], response_class=templates.TemplateResponse)
@@ -207,11 +216,12 @@ async def admin_broadcast(request: Request):
     return templates.TemplateResponse(request, "broadcast.html", {"active": "broadcast"})
 
 @router.post("/broadcast", dependencies=[Depends(verify_admin)])
-async def admin_broadcast_post(message: str = Form(...)):
+async def admin_broadcast_post(request: Request, message: str = Form(...)):
     async with get_session() as session:
         result = await session.execute(select(User.telegram_id).where(User.is_banned == False))
         user_ids = result.scalars().all()
     asyncio.create_task(_web_background_bcast(message, user_ids))
+    await log_admin_action(request, "Sent Broadcast", f"Msg: {message[:20]}...")
     return RedirectResponse(url="/admin/broadcast?status=started", status_code=303)
 
 async def _web_background_bcast(message: str, user_ids: list[int]):
@@ -257,29 +267,33 @@ async def admin_edit_doc(request: Request, doc_id: int):
         return RedirectResponse(url="/admin/documents?status=error", status_code=303)
 
 @router.post("/documents/edit/{doc_id}", dependencies=[Depends(verify_admin)])
-async def admin_edit_doc_post(doc_id: int, file_name: str = Form(...), subject: str = Form(""), category: str = Form(""), class_name: str = Form(""), year: str = Form(""), keywords: str = Form(""), description: str = Form("")):
+async def admin_edit_doc_post(request: Request, doc_id: int, file_name: str = Form(...), subject: str = Form(""), category: str = Form(""), class_name: str = Form(""), year: str = Form(""), keywords: str = Form(""), description: str = Form("")):
     updates = {"file_name": file_name, "subject": subject or None, "category": category or None, "class_name": class_name or None, "year": int(year) if year and year.isdigit() else None, "keywords": [k.strip() for k in keywords.split(",") if k.strip()], "description": description or None}
     try:
         async with get_session() as session:
             await doc_service.update_document(session, doc_id, **updates)
+        await log_admin_action(request, "Edited Document", str(doc_id))
         return RedirectResponse(url="/admin/documents?status=updated", status_code=303)
     except Exception:
         return RedirectResponse(url=f"/admin/documents/edit/{doc_id}?status=error", status_code=303)
 
 @router.post("/documents/{doc_id}/approve", dependencies=[Depends(verify_admin)])
-async def admin_approve_doc(doc_id: int):
+async def admin_approve_doc(request: Request, doc_id: int):
     async with get_session() as session: await doc_service.approve_document(session, doc_id)
+    await log_admin_action(request, "Approved Document", str(doc_id))
     return Response(status_code=200)
 
 @router.post("/documents/{doc_id}/delete", dependencies=[Depends(verify_admin)])
-async def admin_delete_doc(doc_id: int):
+async def admin_delete_doc(request: Request, doc_id: int):
     async with get_session() as session: await doc_service.delete_document(session, doc_id)
+    await log_admin_action(request, "Deleted Document", str(doc_id))
     return Response(status_code=200)
 
 @router.post("/documents/delete_duplicates", dependencies=[Depends(verify_admin)])
-async def admin_delete_duplicates():
+async def admin_delete_duplicates(request: Request):
     async with get_session() as session:
         deleted_count = await doc_service.delete_duplicates(session)
+    await log_admin_action(request, "Deleted Duplicates", f"Count: {deleted_count}")
     return RedirectResponse(url=f"/admin/documents?status=deduped&count={deleted_count}", status_code=303)
 
 @router.get("/users", dependencies=[Depends(verify_admin)], response_class=templates.TemplateResponse)
@@ -290,31 +304,12 @@ async def admin_users(request: Request, page: int = 1, q: Optional[str] = None):
     try:
         async with get_session() as session:
             if q: 
-                # Search by Telegram ID (if number) OR Name OR Username
                 if q.isdigit():
-                    stmt = select(User).where(
-                        (User.username.ilike(f"%{q}%")) | 
-                        (User.telegram_id == int(q)) | 
-                        (User.first_name.ilike(f"%{q}%")) | 
-                        (User.last_name.ilike(f"%{q}%"))
-                    )
-                    count_stmt = select(func.count(User.id)).where(
-                        (User.username.ilike(f"%{q}%")) | 
-                        (User.telegram_id == int(q)) | 
-                        (User.first_name.ilike(f"%{q}%")) | 
-                        (User.last_name.ilike(f"%{q}%"))
-                    )
+                    stmt = select(User).where((User.username.ilike(f"%{q}%")) | (User.telegram_id == int(q)) | (User.first_name.ilike(f"%{q}%")) | (User.last_name.ilike(f"%{q}%")))
+                    count_stmt = select(func.count(User.id)).where((User.username.ilike(f"%{q}%")) | (User.telegram_id == int(q)) | (User.first_name.ilike(f"%{q}%")) | (User.last_name.ilike(f"%{q}%")))
                 else:
-                    stmt = select(User).where(
-                        (User.username.ilike(f"%{q}%")) | 
-                        (User.first_name.ilike(f"%{q}%")) | 
-                        (User.last_name.ilike(f"%{q}%"))
-                    )
-                    count_stmt = select(func.count(User.id)).where(
-                        (User.username.ilike(f"%{q}%")) | 
-                        (User.first_name.ilike(f"%{q}%")) | 
-                        (User.last_name.ilike(f"%{q}%"))
-                    )
+                    stmt = select(User).where((User.username.ilike(f"%{q}%")) | (User.first_name.ilike(f"%{q}%")) | (User.last_name.ilike(f"%{q}%")))
+                    count_stmt = select(func.count(User.id)).where((User.username.ilike(f"%{q}%")) | (User.first_name.ilike(f"%{q}%")) | (User.last_name.ilike(f"%{q}%")))
             else: 
                 stmt = select(User)
                 count_stmt = select(func.count(User.id))
@@ -342,34 +337,40 @@ async def admin_user_profile(request: Request, telegram_id: int):
         return RedirectResponse(url="/admin/users?status=error", status_code=303)
 
 @router.post("/users/{telegram_id}/send_message", dependencies=[Depends(verify_admin)])
-async def admin_send_dm(telegram_id: int, message: str = Form(...)):
+async def admin_send_dm(request: Request, telegram_id: int, message: str = Form(...)):
     try: await bot.send_message(telegram_id, message)
     except Exception as e: logger.error("web_dm_failed", user_id=telegram_id, error=str(e))
+    await log_admin_action(request, "Sent DM", str(telegram_id))
     return RedirectResponse(url=f"/admin/users/{telegram_id}?status=sent", status_code=303)
 
 @router.post("/users/{telegram_id}/grant_premium", dependencies=[Depends(verify_admin)])
-async def admin_grant_premium(telegram_id: int, days: int = Form(30)):
+async def admin_grant_premium(request: Request, telegram_id: int, days: int = Form(30)):
     await user_service.activate_premium(telegram_id, days)
+    await log_admin_action(request, "Granted Premium", f"User: {telegram_id}, Days: {days}")
     return RedirectResponse(url=f"/admin/users/{telegram_id}", status_code=303)
 
 @router.post("/users/{telegram_id}/revoke_premium", dependencies=[Depends(verify_admin)])
-async def admin_revoke_premium(telegram_id: int):
+async def admin_revoke_premium(request: Request, telegram_id: int):
     await user_service.revoke_premium(telegram_id)
+    await log_admin_action(request, "Revoked Premium", str(telegram_id))
     return RedirectResponse(url=f"/admin/users/{telegram_id}", status_code=303)
 
 @router.post("/users/{telegram_id}/ban", dependencies=[Depends(verify_admin)])
-async def admin_ban_user(telegram_id: int):
+async def admin_ban_user(request: Request, telegram_id: int):
     await user_service.ban_user(telegram_id)
+    await log_admin_action(request, "Banned User", str(telegram_id))
     return RedirectResponse(url=f"/admin/users/{telegram_id}", status_code=303)
 
 @router.post("/users/{telegram_id}/unban", dependencies=[Depends(verify_admin)])
-async def admin_unban_user(telegram_id: int):
+async def admin_unban_user(request: Request, telegram_id: int):
     await user_service.unban_user(telegram_id)
+    await log_admin_action(request, "Unbanned User", str(telegram_id))
     return RedirectResponse(url=f"/admin/users/{telegram_id}", status_code=303)
 
 @router.post("/users/{telegram_id}/reset_search", dependencies=[Depends(verify_admin)])
-async def admin_reset_search(telegram_id: int):
+async def admin_reset_search(request: Request, telegram_id: int):
     await user_service.reset_search_count(telegram_id)
+    await log_admin_action(request, "Reset Search Count", str(telegram_id))
     return RedirectResponse(url=f"/admin/users/{telegram_id}", status_code=303)
 
 # ── Admin Management (Super Admin Only) ─────────
@@ -398,6 +399,7 @@ async def admin_add(request: Request, telegram_id: str = Form(...), name: str = 
             existing = await session.execute(select(AdminUser).where(AdminUser.telegram_id == tid))
             if not existing.scalar_one_or_none():
                 session.add(AdminUser(telegram_id=tid, name=name, password=password, permissions=perms))
+        await log_admin_action(request, "Added Admin", str(tid))
     except Exception as e:
         logger.error("admin_add_error", error=str(e))
         await repair_database()
@@ -410,8 +412,7 @@ async def admin_edit(request: Request, admin_id: int):
     try:
         async with get_session() as session:
             admin = await session.get(AdminUser, admin_id)
-        if not admin:
-            return RedirectResponse(url="/admin/admins", status_code=303)
+        if not admin: return RedirectResponse(url="/admin/admins", status_code=303)
         return templates.TemplateResponse(request, "admin_edit.html", {"admin": admin, "active": "admins"})
     except Exception:
         await repair_database()
@@ -426,46 +427,56 @@ async def admin_edit_post(request: Request, admin_id: int, name: str = Form(""),
             admin = await session.get(AdminUser, admin_id)
             if admin:
                 admin.name = name
-                if password: # Only update the password if a new one was typed
-                    admin.password = password
+                if password: admin.password = password
                 admin.permissions = ",".join(permissions)
+        await log_admin_action(request, "Edited Admin", str(admin_id))
     except Exception as e:
         logger.error("admin_edit_error", error=str(e))
     return RedirectResponse(url="/admin/admins", status_code=303)
-    
+
 @router.post("/admins/delete/{admin_id}", dependencies=[Depends(verify_admin)])
 async def admin_delete(request: Request, admin_id: int):
     if "admins" not in request.state.perms:
         return RedirectResponse(url="/admin/?status=unauthorized", status_code=303)
     async with get_session() as session:
         admin = await session.get(AdminUser, admin_id)
-        if admin:
-            await session.delete(admin)
+        if admin: await session.delete(admin)
+    await log_admin_action(request, "Deleted Admin", str(admin_id))
     return RedirectResponse(url="/admin/admins", status_code=303)
+
+# ── Activity Logs (Super Admin Only) ─────────
+
+@router.get("/logs", dependencies=[Depends(verify_admin)], response_class=templates.TemplateResponse)
+async def admin_logs(request: Request):
+    if "admins" not in request.state.perms:
+        return RedirectResponse(url="/admin/?status=unauthorized", status_code=303)
+    async with get_session() as session:
+        res = await session.execute(select(AuditLog).order_by(AuditLog.created_at.desc()).limit(100))
+        logs = res.scalars().all()
+    return templates.TemplateResponse(request, "logs.html", {"logs": logs, "active": "logs"})
 
 # ── Automated Cleanup & Maintenance Tools ─────────
 
 @router.get("/deep_clean", dependencies=[Depends(verify_admin)])
 async def deep_clean(request: Request):
-    if "admins" not in request.state.perms:
-        return RedirectResponse(url="/admin/?status=unauthorized", status_code=303)
+    if "admins" not in request.state.perms: return RedirectResponse(url="/admin/?status=unauthorized", status_code=303)
     async with get_session() as session:
         await session.execute(text("DELETE FROM documents WHERE file_id IS NULL OR file_name IS NULL OR file_name = ''"))
         await session.execute(text("DELETE FROM documents WHERE id NOT IN (SELECT MIN(id) FROM documents GROUP BY file_id)"))
+    await log_admin_action(request, "Ran Deep Clean")
     return "✅ Deep Clean Complete!"
 
 @router.get("/fix_sequence", dependencies=[Depends(verify_admin)])
 async def fix_sequence(request: Request):
-    if "admins" not in request.state.perms:
-        return RedirectResponse(url="/admin/?status=unauthorized", status_code=303)
+    if "admins" not in request.state.perms: return RedirectResponse(url="/admin/?status=unauthorized", status_code=303)
     async with get_session() as session:
         await session.execute(text("SELECT setval(pg_get_serial_sequence('documents', 'id'), (SELECT MAX(id) FROM documents));"))
+    await log_admin_action(request, "Reset ID Sequence")
     return "✅ Success! The ID counter has been reset."
 
 @router.get("/update_keyboards", dependencies=[Depends(verify_admin)])
 async def update_keyboards(request: Request):
-    if "admins" not in request.state.perms:
-        return RedirectResponse(url="/admin/?status=unauthorized", status_code=303)
+    if "admins" not in request.state.perms: return RedirectResponse(url="/admin/?status=unauthorized", status_code=303)
     from app.utils.keyboards import main_menu_kb
     async with get_session() as session:
         prem_res = await session.execute(select(BotSetting).where(BotSetting.key == "premium_enabled"))
@@ -480,16 +491,15 @@ async def update_keyboards(request: Request):
             await bot.send_message(uid, "✨ <b>PrepCore just got an update!</b>\n\nWe've added a new <b>Referral Program</b>! Check out the new menu button below to invite your friends and earn extra daily searches. 🎁", reply_markup=main_menu_kb(show_premium=show_prem))
             sent_count += 1
             await asyncio.sleep(0.05)
-        except Exception:
-            failed_count += 1
+        except Exception: failed_count += 1
+    await log_admin_action(request, "Updated All Keyboards", f"Sent: {sent_count}")
     return f"✅ Success! Sent the new keyboard to {sent_count} users. ({failed_count} failed/blocked)."
 
 # ── Database Migration Tool ─────────────────────
 
 @router.get("/migrate", dependencies=[Depends(verify_admin)])
 async def migrate_data(request: Request):
-    if "admins" not in request.state.perms:
-        return RedirectResponse(url="/admin/?status=unauthorized", status_code=303)
+    if "admins" not in request.state.perms: return RedirectResponse(url="/admin/?status=unauthorized", status_code=303)
     old_url = settings.DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")
     new_url = os.environ.get("NEW_DATABASE_URL")
     if not new_url: return "Error: NEW_DATABASE_URL is not set."
@@ -498,8 +508,7 @@ async def migrate_data(request: Request):
     try:
         old_conn = await asyncpg.connect(old_url)
         new_conn = await asyncpg.connect(new_url)
-    except Exception as e:
-        return f"Connection failed: {e}"
+    except Exception as e: return f"Connection failed: {e}"
 
     await new_conn.execute("CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, telegram_id BIGINT UNIQUE NOT NULL, username VARCHAR(255), first_name VARCHAR(255), last_name VARCHAR(255), is_premium BOOLEAN DEFAULT false, premium_expiry TIMESTAMP WITH TIME ZONE, is_banned BOOLEAN DEFAULT false, search_count INTEGER DEFAULT 0, upload_count INTEGER DEFAULT 0, referral_count INTEGER DEFAULT 0, last_reset_date DATE DEFAULT CURRENT_DATE, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(), updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());")
     await new_conn.execute("CREATE TABLE IF NOT EXISTS documents (id SERIAL PRIMARY KEY, file_id TEXT NOT NULL, message_id BIGINT, file_name TEXT NOT NULL, subject VARCHAR(255), category VARCHAR(100), class_name VARCHAR(100), year INTEGER, keywords TEXT[], description TEXT, uploaded_by BIGINT, approved BOOLEAN DEFAULT true, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(), updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());")
