@@ -318,16 +318,11 @@ async def admin_users(request: Request, page: int = 1, q: Optional[str] = None):
             else: 
                 stmt = select(User)
                 count_stmt = select(func.count(User.id))
-                
             result = await session.execute(stmt.order_by(User.created_at.desc()).offset((page - 1) * per_page).limit(per_page))
             users = result.scalars().all()
             total = (await session.execute(count_stmt)).scalar() or 0
-            
         total_pages = max(1, (total + per_page - 1) // per_page)
         return templates.TemplateResponse(request, "users.html", {"users": users, "page": page, "total_pages": total_pages, "q": q, "active": "users"})
-    except Exception as e:
-        logger.error("admin_users_error", error=str(e), exc_info=True)
-        return templates.TemplateResponse(request, "users.html", {"users": [], "page": 1, "total_pages": 1, "q": q, "active": "users"})
     except Exception:
         await repair_database()
         return templates.TemplateResponse(request, "users.html", {"users": [], "page": 1, "total_pages": 1, "q": q, "active": "users"})
@@ -383,13 +378,17 @@ async def admin_reset_search(telegram_id: int):
 async def admin_list(request: Request):
     if "admins" not in request.state.perms:
         return RedirectResponse(url="/admin/?status=unauthorized", status_code=303)
-    async with get_session() as session:
-        res = await session.execute(select(AdminUser).order_by(AdminUser.created_at.desc()))
-        admins = res.scalars().all()
-    return templates.TemplateResponse(request, "admins.html", {"admins": admins, "active": "admins"})
+    try:
+        async with get_session() as session:
+            res = await session.execute(select(AdminUser).order_by(AdminUser.created_at.desc()))
+            admins = res.scalars().all()
+        return templates.TemplateResponse(request, "admins.html", {"admins": admins, "active": "admins"})
+    except Exception:
+        await repair_database()
+        return RedirectResponse(url="/admin/admins", status_code=303)
 
 @router.post("/admins/add", dependencies=[Depends(verify_admin)])
-async def admin_add(telegram_id: str = Form(...), name: str = Form(""), password: str = Form(...), permissions: list[str] = Form([])):
+async def admin_add(request: Request, telegram_id: str = Form(...), name: str = Form(""), password: str = Form(...), permissions: list[str] = Form([])):
     if "admins" not in request.state.perms:
         return RedirectResponse(url="/admin/?status=unauthorized", status_code=303)
     try:
@@ -401,10 +400,11 @@ async def admin_add(telegram_id: str = Form(...), name: str = Form(""), password
                 session.add(AdminUser(telegram_id=tid, name=name, password=password, permissions=perms))
     except Exception as e:
         logger.error("admin_add_error", error=str(e))
+        await repair_database()
     return RedirectResponse(url="/admin/admins", status_code=303)
 
 @router.post("/admins/delete/{admin_id}", dependencies=[Depends(verify_admin)])
-async def admin_delete(admin_id: int):
+async def admin_delete(request: Request, admin_id: int):
     if "admins" not in request.state.perms:
         return RedirectResponse(url="/admin/?status=unauthorized", status_code=303)
     async with get_session() as session:
@@ -416,7 +416,7 @@ async def admin_delete(admin_id: int):
 # ── Automated Cleanup & Maintenance Tools ─────────
 
 @router.get("/deep_clean", dependencies=[Depends(verify_admin)])
-async def deep_clean():
+async def deep_clean(request: Request):
     if "admins" not in request.state.perms:
         return RedirectResponse(url="/admin/?status=unauthorized", status_code=303)
     async with get_session() as session:
@@ -425,7 +425,7 @@ async def deep_clean():
     return "✅ Deep Clean Complete!"
 
 @router.get("/fix_sequence", dependencies=[Depends(verify_admin)])
-async def fix_sequence():
+async def fix_sequence(request: Request):
     if "admins" not in request.state.perms:
         return RedirectResponse(url="/admin/?status=unauthorized", status_code=303)
     async with get_session() as session:
@@ -433,7 +433,7 @@ async def fix_sequence():
     return "✅ Success! The ID counter has been reset."
 
 @router.get("/update_keyboards", dependencies=[Depends(verify_admin)])
-async def update_keyboards():
+async def update_keyboards(request: Request):
     if "admins" not in request.state.perms:
         return RedirectResponse(url="/admin/?status=unauthorized", status_code=303)
     from app.utils.keyboards import main_menu_kb
@@ -457,7 +457,7 @@ async def update_keyboards():
 # ── Database Migration Tool ─────────────────────
 
 @router.get("/migrate", dependencies=[Depends(verify_admin)])
-async def migrate_data():
+async def migrate_data(request: Request):
     if "admins" not in request.state.perms:
         return RedirectResponse(url="/admin/?status=unauthorized", status_code=303)
     old_url = settings.DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")
