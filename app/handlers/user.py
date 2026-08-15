@@ -289,7 +289,7 @@ async def _perform_search(message: Message, query: str, db_user: User | None, pa
         )
 
         if db_user:
-            await user_service.increment_search_count(session, db_user.telegram_id)
+            await user_service.increment_search_count(db_user.telegram_id)
             await user_service.log_search(session, db_user.id, query, total)
 
     if not results:
