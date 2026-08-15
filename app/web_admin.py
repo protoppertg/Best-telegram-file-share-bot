@@ -17,7 +17,7 @@ from sqlalchemy import select, func, text
 from app.config import settings
 from app.database import get_session
 from app.bot import bot
-from app.models import BotSetting, User, Document
+from app.models import AdminUser, BotSetting, User, Document
 from app.services import user as user_service
 from app.services import document as doc_service
 from app.utils.logger import logger
@@ -27,10 +27,14 @@ router = APIRouter(prefix="/admin")
 BASE_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
+# Super Admin Permissions (always allowed)
+SUPER_PERMS = ["stats", "users", "documents", "broadcast", "forcesub", "admins"]
 
 async def verify_admin(request: Request):
     if not request.session.get("is_admin"):
         raise HTTPException(status_code=303, headers={"Location": "/admin/login"})
+    # Attach permissions to request state so templates can use them
+    request.state.perms = request.session.get("perms", [])
     return True
 
 async def get_force_sub_channels(session) -> list[dict]:
@@ -54,15 +58,13 @@ async def get_setting(session, key: str, default: str = "") -> str:
     return s.value if s and s.value else default
 
 async def repair_database():
-    """Auto-repairs missing columns to prevent web panel crashes."""
     async with get_session() as session:
         await session.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_count INTEGER DEFAULT 0"))
         await session.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_banned BOOLEAN DEFAULT false"))
         await session.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS premium_expiry TIMESTAMP WITH TIME ZONE"))
         await session.execute(text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS class_name VARCHAR(100)"))
         await session.execute(text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS keywords TEXT[]"))
-        await session.execute(text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS subject VARCHAR(255)"))
-        await session.execute(text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS category VARCHAR(100)"))
+        await session.execute(text("ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS password VARCHAR(255)"))
 
 @router.get("/login", response_class=templates.TemplateResponse)
 async def admin_login(request: Request):
@@ -70,9 +72,24 @@ async def admin_login(request: Request):
 
 @router.post("/login")
 async def admin_login_post(request: Request, password: str = Form(...)):
+    # 1. Check Super Admin
     if password == settings.WEB_ADMIN_PASSWORD:
-        request.session["is_admin"] = True
+        request.session["is_admin"] = "super"
+        request.session["perms"] = SUPER_PERMS
         return RedirectResponse(url="/admin/", status_code=303)
+        
+    # 2. Check Sub-Admins
+    try:
+        async with get_session() as session:
+            res = await session.execute(select(AdminUser).where(AdminUser.password == password))
+            admin = res.scalar_one_or_none()
+            if admin and admin.permissions:
+                request.session["is_admin"] = str(admin.telegram_id)
+                request.session["perms"] = [p.strip() for p in admin.permissions.split(",")]
+                return RedirectResponse(url="/admin/", status_code=303)
+    except Exception:
+        await repair_database() # Auto-repair if table missing
+        
     return templates.TemplateResponse(request, "login.html", {"error": "Invalid password"})
 
 @router.get("/logout")
@@ -99,6 +116,9 @@ async def admin_dashboard(request: Request):
 
 @router.get("/settings", dependencies=[Depends(verify_admin)], response_class=templates.TemplateResponse)
 async def admin_settings(request: Request):
+    if "forcesub" not in request.state.perms:
+        return RedirectResponse(url="/admin/?status=unauthorized", status_code=303)
+        
     async with get_session() as session:
         search_enabled = await get_setting(session, "search_enabled", "true")
         ad_enabled = await get_setting(session, "auto_delete_enabled", "false")
@@ -119,46 +139,21 @@ async def admin_settings(request: Request):
         channels = await get_force_sub_channels(session)
         
     return templates.TemplateResponse(request, "settings.html", {
-        "search_enabled": search_enabled == "true", 
-        "ad_enabled": ad_enabled == "true",
-        "ad_seconds": ad_seconds,
-        "protect_forwarding": protect_fwd == "true",
-        "post_file_message": post_file_msg,
-        "start_text": start_text,
-        "about_text": about_text,
-        "premium_text": premium_text,
-        "premium_enabled": premium_enabled == "true",
-        "free_search_limit": free_search_limit,
-        "prem_search_limit": prem_search_limit,
-        "shortlink_enabled": shortlink_enabled == "true",
-        "shortlink_api_url": shortlink_api_url,
-        "shortlink_api_key": shortlink_api_key,
-        "referral_reward_type": referral_reward_type,
-        "referral_reward_amount": referral_reward_amount,
-        "channels": channels,
-        "active": "settings"
+        "search_enabled": search_enabled == "true", "ad_enabled": ad_enabled == "true",
+        "ad_seconds": ad_seconds, "protect_forwarding": protect_fwd == "true",
+        "post_file_message": post_file_msg, "start_text": start_text, "about_text": about_text,
+        "premium_text": premium_text, "premium_enabled": premium_enabled == "true",
+        "free_search_limit": free_search_limit, "prem_search_limit": prem_search_limit,
+        "shortlink_enabled": shortlink_enabled == "true", "shortlink_api_url": shortlink_api_url,
+        "shortlink_api_key": shortlink_api_key, "referral_reward_type": referral_reward_type,
+        "referral_reward_amount": referral_reward_amount, "channels": channels, "active": "settings"
     })
 
 @router.post("/settings", dependencies=[Depends(verify_admin)])
-async def admin_settings_post(
-    request: Request, 
-    search_enabled: str = Form("off"), 
-    auto_delete_enabled: str = Form("off"),
-    auto_delete_seconds: str = Form("3600"),
-    protect_forwarding: str = Form("off"),
-    post_file_message: str = Form(""),
-    start_text: str = Form(""),
-    about_text: str = Form(""),
-    premium_text: str = Form(""),
-    premium_enabled: str = Form("off"),
-    free_search_limit: str = Form("5"),
-    prem_search_limit: str = Form("100"),
-    shortlink_enabled: str = Form("off"),
-    shortlink_api_url: str = Form(""),
-    shortlink_api_key: str = Form(""),
-    referral_reward_type: str = Form("searches"),
-    referral_reward_amount: str = Form("1")
-):
+async def admin_settings_post(request: Request, search_enabled: str = Form("off"), auto_delete_enabled: str = Form("off"), auto_delete_seconds: str = Form("3600"), protect_forwarding: str = Form("off"), post_file_message: str = Form(""), start_text: str = Form(""), about_text: str = Form(""), premium_text: str = Form(""), premium_enabled: str = Form("off"), free_search_limit: str = Form("5"), prem_search_limit: str = Form("100"), shortlink_enabled: str = Form("off"), shortlink_api_url: str = Form(""), shortlink_api_key: str = Form(""), referral_reward_type: str = Form("searches"), referral_reward_amount: str = Form("1")):
+    if "forcesub" not in request.state.perms:
+        return RedirectResponse(url="/admin/?status=unauthorized", status_code=303)
+        
     try:
         async with get_session() as session:
             async def save_setting(key: str, value: str):
@@ -183,7 +178,6 @@ async def admin_settings_post(
             await save_setting("shortlink_api_key", shortlink_api_key)
             await save_setting("referral_reward_type", referral_reward_type or "searches")
             await save_setting("referral_reward_amount", referral_reward_amount if referral_reward_amount and referral_reward_amount.isdigit() else "1")
-                
         return RedirectResponse(url="/admin/settings", status_code=303)
     except Exception as e:
         logger.error("web_settings_save_failed", error=str(e), exc_info=True)
@@ -208,6 +202,8 @@ async def admin_settings_fs_delete(index: int):
 
 @router.get("/broadcast", dependencies=[Depends(verify_admin)], response_class=templates.TemplateResponse)
 async def admin_broadcast(request: Request):
+    if "broadcast" not in request.state.perms:
+        return RedirectResponse(url="/admin/?status=unauthorized", status_code=303)
     return templates.TemplateResponse(request, "broadcast.html", {"active": "broadcast"})
 
 @router.post("/broadcast", dependencies=[Depends(verify_admin)])
@@ -225,10 +221,10 @@ async def _web_background_bcast(message: str, user_ids: list[int]):
             await asyncio.sleep(0.05)
         except Exception: pass
 
-# ── Documents ─────────────────────
-
 @router.get("/documents", dependencies=[Depends(verify_admin)], response_class=templates.TemplateResponse)
 async def admin_documents(request: Request, page: int = 1, q: Optional[str] = None):
+    if "documents" not in request.state.perms:
+        return RedirectResponse(url="/admin/?status=unauthorized", status_code=303)
     per_page = 50
     try:
         async with get_session() as session:
@@ -238,44 +234,36 @@ async def admin_documents(request: Request, page: int = 1, q: Optional[str] = No
             else: 
                 stmt = select(Document)
                 count_stmt = select(func.count(Document.id))
-                
             result = await session.execute(stmt.order_by(Document.created_at.desc()).offset((page - 1) * per_page).limit(per_page))
             docs = result.scalars().all()
             total = (await session.execute(count_stmt)).scalar() or 0
-            
         total_pages = max(1, (total + per_page - 1) // per_page)
         return templates.TemplateResponse(request, "documents.html", {"docs": docs, "page": page, "total_pages": total_pages, "q": q, "active": "documents"})
-    except Exception as e:
-        logger.error("admin_documents_error", error=str(e), exc_info=True)
+    except Exception:
         await repair_database()
         return templates.TemplateResponse(request, "documents.html", {"docs": [], "page": 1, "total_pages": 1, "q": q, "active": "documents"})
 
 @router.get("/documents/edit/{doc_id}", dependencies=[Depends(verify_admin)], response_class=templates.TemplateResponse)
 async def admin_edit_doc(request: Request, doc_id: int):
+    if "documents" not in request.state.perms:
+        return RedirectResponse(url="/admin/?status=unauthorized", status_code=303)
     try:
         async with get_session() as session:
             doc = await doc_service.get_document_by_id(session, doc_id)
-        if not doc: 
-            return RedirectResponse(url="/admin/documents?status=notfound", status_code=303)
+        if not doc: return RedirectResponse(url="/admin/documents?status=notfound", status_code=303)
         return templates.TemplateResponse(request, "edit_document.html", {"doc": doc, "active": "documents"})
-    except Exception as e:
-        logger.error("admin_edit_doc_error", error=str(e), exc_info=True)
+    except Exception:
         await repair_database()
         return RedirectResponse(url="/admin/documents?status=error", status_code=303)
 
 @router.post("/documents/edit/{doc_id}", dependencies=[Depends(verify_admin)])
 async def admin_edit_doc_post(doc_id: int, file_name: str = Form(...), subject: str = Form(""), category: str = Form(""), class_name: str = Form(""), year: str = Form(""), keywords: str = Form(""), description: str = Form("")):
-    updates = {
-        "file_name": file_name, "subject": subject or None, "category": category or None, 
-        "class_name": class_name or None, "year": int(year) if year and year.isdigit() else None,
-        "keywords": [k.strip() for k in keywords.split(",") if k.strip()], "description": description or None
-    }
+    updates = {"file_name": file_name, "subject": subject or None, "category": category or None, "class_name": class_name or None, "year": int(year) if year and year.isdigit() else None, "keywords": [k.strip() for k in keywords.split(",") if k.strip()], "description": description or None}
     try:
         async with get_session() as session:
             await doc_service.update_document(session, doc_id, **updates)
         return RedirectResponse(url="/admin/documents?status=updated", status_code=303)
-    except Exception as e:
-        logger.error("admin_edit_doc_post_error", error=str(e), exc_info=True)
+    except Exception:
         return RedirectResponse(url=f"/admin/documents/edit/{doc_id}?status=error", status_code=303)
 
 @router.post("/documents/{doc_id}/approve", dependencies=[Depends(verify_admin)])
@@ -294,10 +282,10 @@ async def admin_delete_duplicates():
         deleted_count = await doc_service.delete_duplicates(session)
     return RedirectResponse(url=f"/admin/documents?status=deduped&count={deleted_count}", status_code=303)
 
-# ── Users ─────────────────────────────────────────
-
 @router.get("/users", dependencies=[Depends(verify_admin)], response_class=templates.TemplateResponse)
 async def admin_users(request: Request, page: int = 1, q: Optional[str] = None):
+    if "users" not in request.state.perms:
+        return RedirectResponse(url="/admin/?status=unauthorized", status_code=303)
     per_page = 15
     try:
         async with get_session() as session:
@@ -311,31 +299,26 @@ async def admin_users(request: Request, page: int = 1, q: Optional[str] = None):
             else: 
                 stmt = select(User)
                 count_stmt = select(func.count(User.id))
-                
             result = await session.execute(stmt.order_by(User.created_at.desc()).offset((page - 1) * per_page).limit(per_page))
             users = result.scalars().all()
             total = (await session.execute(count_stmt)).scalar() or 0
-            
         total_pages = max(1, (total + per_page - 1) // per_page)
         return templates.TemplateResponse(request, "users.html", {"users": users, "page": page, "total_pages": total_pages, "q": q, "active": "users"})
-    except Exception as e:
-        logger.error("admin_users_error", error=str(e), exc_info=True)
+    except Exception:
         await repair_database()
         return templates.TemplateResponse(request, "users.html", {"users": [], "page": 1, "total_pages": 1, "q": q, "active": "users"})
 
 @router.get("/users/{telegram_id}", dependencies=[Depends(verify_admin)], response_class=templates.TemplateResponse)
 async def admin_user_profile(request: Request, telegram_id: int):
+    if "users" not in request.state.perms:
+        return RedirectResponse(url="/admin/?status=unauthorized", status_code=303)
     try:
         async with get_session() as session:
             user = await session.execute(select(User).where(User.telegram_id == telegram_id))
             user = user.scalar_one_or_none()
-            
-        if not user: 
-            return RedirectResponse(url="/admin/users?status=notfound", status_code=303)
-            
+        if not user: return RedirectResponse(url="/admin/users?status=notfound", status_code=303)
         return templates.TemplateResponse(request, "user_profile.html", {"u": user, "active": "users"})
-    except Exception as e:
-        logger.error("admin_user_profile_error", error=str(e), exc_info=True)
+    except Exception:
         await repair_database()
         return RedirectResponse(url="/admin/users?status=error", status_code=303)
 
@@ -370,39 +353,72 @@ async def admin_reset_search(telegram_id: int):
     await user_service.reset_search_count(telegram_id)
     return RedirectResponse(url=f"/admin/users/{telegram_id}", status_code=303)
 
+# ── Admin Management (Super Admin Only) ─────────
+
+@router.get("/admins", dependencies=[Depends(verify_admin)], response_class=templates.TemplateResponse)
+async def admin_list(request: Request):
+    if "admins" not in request.state.perms:
+        return RedirectResponse(url="/admin/?status=unauthorized", status_code=303)
+    async with get_session() as session:
+        res = await session.execute(select(AdminUser).order_by(AdminUser.created_at.desc()))
+        admins = res.scalars().all()
+    return templates.TemplateResponse(request, "admins.html", {"admins": admins, "active": "admins"})
+
+@router.post("/admins/add", dependencies=[Depends(verify_admin)])
+async def admin_add(telegram_id: str = Form(...), name: str = Form(""), password: str = Form(...), permissions: list[str] = Form([])):
+    if "admins" not in request.state.perms:
+        return RedirectResponse(url="/admin/?status=unauthorized", status_code=303)
+    try:
+        tid = int(telegram_id)
+        perms = ",".join(permissions)
+        async with get_session() as session:
+            existing = await session.execute(select(AdminUser).where(AdminUser.telegram_id == tid))
+            if not existing.scalar_one_or_none():
+                session.add(AdminUser(telegram_id=tid, name=name, password=password, permissions=perms))
+    except Exception as e:
+        logger.error("admin_add_error", error=str(e))
+    return RedirectResponse(url="/admin/admins", status_code=303)
+
+@router.post("/admins/delete/{admin_id}", dependencies=[Depends(verify_admin)])
+async def admin_delete(admin_id: int):
+    if "admins" not in request.state.perms:
+        return RedirectResponse(url="/admin/?status=unauthorized", status_code=303)
+    async with get_session() as session:
+        admin = await session.get(AdminUser, admin_id)
+        if admin:
+            await session.delete(admin)
+    return RedirectResponse(url="/admin/admins", status_code=303)
+
 # ── Automated Cleanup & Maintenance Tools ─────────
 
 @router.get("/deep_clean", dependencies=[Depends(verify_admin)])
 async def deep_clean():
+    if "admins" not in request.state.perms:
+        return RedirectResponse(url="/admin/?status=unauthorized", status_code=303)
     async with get_session() as session:
         await session.execute(text("DELETE FROM documents WHERE file_id IS NULL OR file_name IS NULL OR file_name = ''"))
-        await session.execute(text("""
-            DELETE FROM documents
-            WHERE id NOT IN (
-                SELECT MIN(id)
-                FROM documents
-                GROUP BY file_id
-            )
-        """))
-    return "✅ Deep Clean Complete! Broken files and duplicates removed."
+        await session.execute(text("DELETE FROM documents WHERE id NOT IN (SELECT MIN(id) FROM documents GROUP BY file_id)"))
+    return "✅ Deep Clean Complete!"
 
 @router.get("/fix_sequence", dependencies=[Depends(verify_admin)])
 async def fix_sequence():
+    if "admins" not in request.state.perms:
+        return RedirectResponse(url="/admin/?status=unauthorized", status_code=303)
     async with get_session() as session:
         await session.execute(text("SELECT setval(pg_get_serial_sequence('documents', 'id'), (SELECT MAX(id) FROM documents));"))
     return "✅ Success! The ID counter has been reset."
 
 @router.get("/update_keyboards", dependencies=[Depends(verify_admin)])
 async def update_keyboards():
+    if "admins" not in request.state.perms:
+        return RedirectResponse(url="/admin/?status=unauthorized", status_code=303)
     from app.utils.keyboards import main_menu_kb
     async with get_session() as session:
         prem_res = await session.execute(select(BotSetting).where(BotSetting.key == "premium_enabled"))
         prem_setting = prem_res.scalar_one_or_none()
         show_prem = not (prem_setting and prem_setting.value == "false")
-
         result = await session.execute(select(User.telegram_id).where(User.is_banned == False))
         user_ids = result.scalars().all()
-        
     sent_count = 0
     failed_count = 0
     for uid in user_ids:
@@ -418,6 +434,8 @@ async def update_keyboards():
 
 @router.get("/migrate", dependencies=[Depends(verify_admin)])
 async def migrate_data():
+    if "admins" not in request.state.perms:
+        return RedirectResponse(url="/admin/?status=unauthorized", status_code=303)
     old_url = settings.DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")
     new_url = os.environ.get("NEW_DATABASE_URL")
     if not new_url: return "Error: NEW_DATABASE_URL is not set."
@@ -429,79 +447,22 @@ async def migrate_data():
     except Exception as e:
         return f"Connection failed: {e}"
 
-    await new_conn.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id SERIAL PRIMARY KEY, telegram_id BIGINT UNIQUE NOT NULL, username VARCHAR(255),
-            first_name VARCHAR(255), last_name VARCHAR(255), is_premium BOOLEAN DEFAULT false,
-            premium_expiry TIMESTAMP WITH TIME ZONE, is_banned BOOLEAN DEFAULT false,
-            search_count INTEGER DEFAULT 0, upload_count INTEGER DEFAULT 0, referral_count INTEGER DEFAULT 0,
-            last_reset_date DATE DEFAULT CURRENT_DATE, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-            updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-        );
-    """)
-    await new_conn.execute("""
-        CREATE TABLE IF NOT EXISTS documents (
-            id SERIAL PRIMARY KEY, file_id TEXT NOT NULL, message_id BIGINT, file_name TEXT NOT NULL,
-            subject VARCHAR(255), category VARCHAR(100), class_name VARCHAR(100), year INTEGER,
-            keywords TEXT[], description TEXT, uploaded_by BIGINT, approved BOOLEAN DEFAULT true,
-            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(), updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-        );
-    """)
-    await new_conn.execute("""CREATE TABLE IF NOT EXISTS bot_settings (key VARCHAR(50) PRIMARY KEY, value TEXT);""")
+    await new_conn.execute("CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, telegram_id BIGINT UNIQUE NOT NULL, username VARCHAR(255), first_name VARCHAR(255), last_name VARCHAR(255), is_premium BOOLEAN DEFAULT false, premium_expiry TIMESTAMP WITH TIME ZONE, is_banned BOOLEAN DEFAULT false, search_count INTEGER DEFAULT 0, upload_count INTEGER DEFAULT 0, referral_count INTEGER DEFAULT 0, last_reset_date DATE DEFAULT CURRENT_DATE, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(), updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());")
+    await new_conn.execute("CREATE TABLE IF NOT EXISTS documents (id SERIAL PRIMARY KEY, file_id TEXT NOT NULL, message_id BIGINT, file_name TEXT NOT NULL, subject VARCHAR(255), category VARCHAR(100), class_name VARCHAR(100), year INTEGER, keywords TEXT[], description TEXT, uploaded_by BIGINT, approved BOOLEAN DEFAULT true, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(), updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());")
+    await new_conn.execute("CREATE TABLE IF NOT EXISTS bot_settings (key VARCHAR(50) PRIMARY KEY, value TEXT);")
 
     users = await old_conn.fetch("SELECT telegram_id, username, first_name, last_name, is_premium, premium_expiry, is_banned, search_count, upload_count, last_reset_date FROM users")
     if users:
-        await new_conn.executemany(
-            "INSERT INTO users (telegram_id, username, first_name, last_name, is_premium, premium_expiry, is_banned, search_count, upload_count, last_reset_date) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) ON CONFLICT DO NOTHING",
-            [(u['telegram_id'], u['username'], u['first_name'], u['last_name'], u['is_premium'], u['premium_expiry'], u['is_banned'], u['search_count'], u['upload_count'], u['last_reset_date']) for u in users]
-        )
+        await new_conn.executemany("INSERT INTO users (telegram_id, username, first_name, last_name, is_premium, premium_expiry, is_banned, search_count, upload_count, last_reset_date) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) ON CONFLICT DO NOTHING", [(u['telegram_id'], u['username'], u['first_name'], u['last_name'], u['is_premium'], u['premium_expiry'], u['is_banned'], u['search_count'], u['upload_count'], u['last_reset_date']) for u in users])
 
     docs = await old_conn.fetch("SELECT file_id, message_id, file_name, subject, category, class_name, year, keywords, description, uploaded_by, approved FROM documents")
     if docs:
-        await new_conn.executemany(
-            "INSERT INTO documents (file_id, message_id, file_name, subject, category, class_name, year, keywords, description, uploaded_by, approved) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) ON CONFLICT DO NOTHING",
-            [(d['file_id'], d['message_id'], d['file_name'], d['subject'], d['category'], d['class_name'], d['year'], d['keywords'], d['description'], d['uploaded_by'], d['approved']) for d in docs]
-        )
+        await new_conn.executemany("INSERT INTO documents (file_id, message_id, file_name, subject, category, class_name, year, keywords, description, uploaded_by, approved) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) ON CONFLICT DO NOTHING", [(d['file_id'], d['message_id'], d['file_name'], d['subject'], d['category'], d['class_name'], d['year'], d['keywords'], d['description'], d['uploaded_by'], d['approved']) for d in docs])
 
     settings_row = await old_conn.fetch("SELECT key, value FROM bot_settings")
     if settings_row:
-        await new_conn.executemany(
-            "INSERT INTO bot_settings (key, value) VALUES ($1, $2) ON CONFLICT DO NOTHING",
-            [(s['key'], s['value']) for s in settings_row]
-        )
+        await new_conn.executemany("INSERT INTO bot_settings (key, value) VALUES ($1, $2) ON CONFLICT DO NOTHING", [(s['key'], s['value']) for s in settings_row])
 
     await old_conn.close()
     await new_conn.close()
     return f"✅ Success! Copied {len(users)} users, {len(docs)} documents, and {len(settings_row)} settings to the new database."
-# ── Admin Management ─────────────────────────────
-
-@router.get("/admins", dependencies=[Depends(verify_admin)], response_class=templates.TemplateResponse)
-async def admin_list(request: Request):
-    from app.models import AdminUser
-    async with get_session() as session:
-        res = await session.execute(select(AdminUser).order_by(AdminUser.created_at.desc()))
-        admins = res.scalars().all()
-    return templates.TemplateResponse(request, "admins.html", {"admins": admins, "active": "admins"})
-
-@router.post("/admins/add", dependencies=[Depends(verify_admin)])
-async def admin_add(telegram_id: str = Form(...), name: str = Form(""), permissions: list[str] = Form([])):
-    from app.models import AdminUser
-    try:
-        tid = int(telegram_id)
-        perms = ",".join(permissions)
-        async with get_session() as session:
-            existing = await session.execute(select(AdminUser).where(AdminUser.telegram_id == tid))
-            if not existing.scalar_one_or_none():
-                session.add(AdminUser(telegram_id=tid, name=name, permissions=perms))
-    except Exception as e:
-        logger.error("admin_add_error", error=str(e))
-    return RedirectResponse(url="/admin/admins", status_code=303)
-
-@router.post("/admins/delete/{admin_id}", dependencies=[Depends(verify_admin)])
-async def admin_delete(admin_id: int):
-    from app.models import AdminUser
-    async with get_session() as session:
-        admin = await session.get(AdminUser, admin_id)
-        if admin:
-            await session.delete(admin)
-    return RedirectResponse(url="/admin/admins", status_code=303)
