@@ -51,6 +51,9 @@
             <a href="/admin/admins" class="flex items-center space-x-3 py-2.5 px-4 rounded-xl transition {{ 'bg-blue-500 text-white shadow-sm' if active == 'admins' else 'text-gray-600 hover:bg-gray-200/50' }}">
                 <i class="fas fa-user-shield w-5"></i> <span>Admins</span>
             </a>
+            <a href="/admin/logs" class="flex items-center space-x-3 py-2.5 px-4 rounded-xl transition {{ 'bg-blue-500 text-white shadow-sm' if active == 'logs' else 'text-gray-600 hover:bg-gray-200/50' }}">
+                <i class="fas fa-clipboard-list w-5"></i> <span>Activity Logs</span>
+            </a>
             {% endif %}
             
             {% if 'forcesub' in perms or 'admins' in perms %}
