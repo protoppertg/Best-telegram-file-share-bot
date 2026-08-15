@@ -249,6 +249,8 @@ def _parse_advanced_search(raw_query: str) -> tuple[str, Optional[str], Optional
     return clean_query, subject, class_name, year
 
 async def _perform_search(message: Message, query: str, db_user: User | None, page: int) -> None:
+    # Show "typing..." animation while searching
+    await message.bot.send_chat_action(message.chat.id, "typing")    
     async with get_session() as session:
         setting = await session.execute(select(BotSetting).where(BotSetting.key == "search_enabled"))
         setting = setting.scalar_one_or_none()
