@@ -405,12 +405,13 @@ async def cb_admin_docs(callback: CallbackQuery):
     per_page = 5
     async with get_session() as session:
         total = (await session.execute(select(func.count(Document.id)))).scalar() or 0
-        result = await session.execute(select(Document).order_by(Document.created_at.desc()).offset((page - 1) * per_page).limit(per_page))
+        # Changed to order by Document.id.desc() for perfect chronological sorting
+        result = await session.execute(select(Document).order_by(Document.id.desc()).offset((page - 1) * per_page).limit(per_page))
         docs = result.scalars().all()
     total_pages = max(1, (total + per_page - 1) // per_page)
     await callback.message.edit_text(f"📄 <b>Documents Management</b> ({total} total)", reply_markup=admin_docs_kb(docs, page, total_pages, "adm:docs"))
     await callback.answer()
-
+    
 @router.callback_query(F.data.startswith("adm:pend:"))
 async def cb_admin_pending(callback: CallbackQuery):
     if not await has_permission(callback.from_user.id, "documents"): return
