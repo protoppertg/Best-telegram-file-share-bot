@@ -502,8 +502,16 @@ async def migrate_data(request: Request):
     if "admins" not in request.state.perms:
         return RedirectResponse(url="/admin/?status=unauthorized", status_code=303)
         
-    old_url = settings.DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")
-    new_url = os.environ.get("NEW_DATABASE_URL")
+    # Bulletproof URL cleaner: forcefully reconstructs the URL to start with postgresql://
+    def clean_url(raw_url: str) -> str:
+        if not raw_url: return ""
+        if "://" in raw_url:
+            _, rest = raw_url.split("://", 1)
+            return f"postgresql://{rest}"
+        return raw_url
+
+    old_url = clean_url(settings.DATABASE_URL)
+    new_url = clean_url(os.environ.get("NEW_DATABASE_URL", ""))
     
     if not new_url:
         return "Error: NEW_DATABASE_URL is not set in Render environment."
