@@ -47,6 +47,18 @@ async def _is_premium_enabled() -> bool:
         prem_enabled = prem_enabled.scalar_one_or_none()
         return not (prem_enabled and prem_enabled.value == "false")
 
+def detect_language(text: str) -> str:
+    """Detects if the text is Hinglish or English."""
+    # Check for Devanagari script (Hindi)
+    if re.search(r'[\u0900-\u097F]', text):
+        return "Hindi"
+    # Check for common Hinglish words/patterns
+    hinglish_words = ['hai', 'kya', 'kaise', 'mera', 'tera', 'aaj', 'kal', 'padhai', 'exam', 'bhai', 'yaar', 'nahi', 'haan']
+    words = text.lower().split()
+    if any(word in hinglish_words for word in words):
+        return "Hinglish (Hindi in English script)"
+    return "English"
+
 @router.message(Command("start"))
 async def cmd_start(message: Message, state: FSMContext, command: CommandObject):
     await state.clear()
@@ -153,6 +165,7 @@ async def cmd_studybuddy(message: Message, command: CommandObject, db_user: User
             ai_name = random.choice(GHOST_NAMES)
             me.study_buddy_subject = subject.capitalize()
             me.ai_name = ai_name
+            me.ai_language = "English" # Default to English, will update on first message
             await session.flush()
             
             # Introduce the AI with its fake name
@@ -173,7 +186,8 @@ async def cmd_endchat(message: Message, db_user: User | None = None):
         if me:
             me.chat_partner_id = None
             me.study_buddy_subject = None
-            me.ai_name = None # Clear AI name
+            me.ai_name = None 
+            me.ai_language = None # Clear AI language
             
         if partner_id:
             partner = await session.execute(select(User).where(User.telegram_id == partner_id))
@@ -354,9 +368,22 @@ async def handle_text(message: Message, db_user: User | None = None):
     # 2. Check if in Ghost AI Mode
     if db_user and db_user.study_buddy_subject and db_user.ai_name:
         await message.bot.send_chat_action(message.chat.id, "typing")
+        
+        # Detect language and save it so the AI remembers
+        detected_lang = detect_language(query)
+        if not db_user.ai_language or db_user.ai_language == "English":
+            if detected_lang != "English":
+                async with get_session() as session:
+                    me_res = await session.execute(select(User).where(User.telegram_id == db_user.telegram_id))
+                    me = me_res.scalar_one_or_none()
+                    if me:
+                        me.ai_language = detected_lang
+                        await session.flush()
+                db_user.ai_language = detected_lang # Update the object in memory for immediate use
+                
         from app.services.ai import get_ghost_ai_response
-        # Pass the AI's name so it remembers who it is!
-        ai_reply = await get_ghost_ai_response(db_user.ai_name, db_user.study_buddy_subject, query)
+        # Pass the AI's name, subject, language, and message!
+        ai_reply = await get_ghost_ai_response(db_user.ai_name, db_user.study_buddy_subject, db_user.ai_language or "English", query)
         await message.answer(ai_reply) # Send raw text, no "AI:" prefix
         return
 
