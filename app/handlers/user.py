@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 import re
 from html import escape
-from typing import Any
+from typing import Any, Optional
 
 from aiogram import Bot, F, Router
 from aiogram.filters import Command, CommandObject, StateFilter
@@ -17,7 +17,7 @@ from sqlalchemy import select
 
 from app.config import settings
 from app.database import get_session
-from app.models import BotSetting, User
+from app.models import BotSetting, Bounty, User
 from app.services import user as user_service
 from app.services import document as doc_service
 from app.services.search import search_documents
@@ -57,7 +57,7 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
                     if not existing_user.scalar_one_or_none():
                         await user_service.add_referral(ref_id)
                         try:
-                            await message.bot.send_message(ref_id, "🎉 <b>New Referral!</b>\nSomeone joined using your link. You earned a reward!")
+                            await message.bot.send_message(ref_id, "🎉 <b>New Referral!</b>\nSomeone joined using your link. You earned 10 Aura!")
                         except Exception:
                             pass
 
@@ -65,20 +65,122 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
         text_setting = await session.execute(select(BotSetting).where(BotSetting.key == "start_text"))
         text_setting = text_setting.scalar_one_or_none()
         
+    user_name = escape(message.from_user.first_name or "Student")
+    
     default_text = (
-        "<b>✨ Welcome to PrepCore!</b>\n"
-        "<blockquote>Your ultimate library for study materials. Find notes, PYQs, and books in seconds!</blockquote>\n"
-        "<b>🛠 Main Menu</b>\n"
-        "┣ <b>🔍 Search</b> — Type keywords or use filters (e.g., <code>physics class:10</code>)\n"
-        "┣ <b>📤 Upload</b> — Send a PDF to support the community\n"
-        "┣ <b>🤝 Referral</b> — Invite friends & earn rewards\n"
-        "┗ <b>🎟️ Premium</b> — Unlock unlimited searches\n\n"
-        "<i>Ready to dive in? Just type a keyword below!</i>"
+        f"<b>PrepCore Hub</b> ✨\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"Welcome, <b>{user_name}</b>!\n"
+        f"<blockquote>Your ultimate library for study materials. Find notes, PYQs, and books in seconds.</blockquote>\n"
+        f"┌ 📚 <b>Library</b>: Thousands of files available.\n"
+        f"├ 🔍 <b>Smart Search</b>: Use filters like <code>class:10</code>.\n"
+        f"├ 🎯 <b>Bounty</b>: Request files via /bounty\n"
+        f"├ 👥 <b>Study Buddy</b>: Find a partner via /studybuddy\n"
+        f"└ 🎟️ <b>Premium</b>: Unlock unlimited power.\n\n"
+        f"<i>What are we studying today?</i>"
     )
     text = text_setting.value if text_setting and text_setting.value else default_text
     
     show_prem = await _is_premium_enabled()
     await message.answer(text, reply_markup=main_menu_kb(show_premium=show_prem))
+
+@router.message(Command("bounty"))
+async def cmd_bounty(message: Message, command: CommandObject, db_user: User | None = None):
+    if not db_user:
+        await message.answer("Please send /start first to register.")
+        return
+    query = command.args
+    if not query or len(query) < 3:
+        await message.answer("Usage: <code>/bounty Need HC Verma Physics PDF</code>")
+        return
+        
+    async with get_session() as session:
+        bounty = Bounty(requester_id=db_user.telegram_id, query=query)
+        session.add(bounty)
+        
+    await message.answer(
+        "🎯 <b>Bounty Posted!</b>\n"
+        f"<blockquote>{escape(query)}</blockquote>\n"
+        "If someone uploads a file matching this request, they will instantly earn <b>50 Aura</b>!\n\n"
+        "Use /leaderboard to see top contributors."
+    )
+
+@router.message(Command("studybuddy"))
+async def cmd_studybuddy(message: Message, command: CommandObject, db_user: User | None = None):
+    if not db_user:
+        await message.answer("Please send /start first to register.")
+        return
+        
+    subject = command.args
+    if not subject:
+        await message.answer("Usage: <code>/studybuddy Physics</code>")
+        return
+        
+    safe_subject = escape(subject.capitalize())
+    
+    async with get_session() as session:
+        match_res = await session.execute(
+            select(User).where(User.study_buddy_subject == subject.capitalize(), User.telegram_id != db_user.telegram_id).limit(1)
+        )
+        match = match_res.scalar_one_or_none()
+        
+        if match:
+            match.study_buddy_subject = None
+            match.chat_partner_id = db_user.telegram_id
+            
+            db_user.study_buddy_subject = None
+            db_user.chat_partner_id = match.telegram_id
+            await session.flush()
+            
+            await message.answer(f"👥 <b>Study Buddy Found!</b>\nYou are now connected for <b>{safe_subject}</b>.\n<blockquote>Say hi! Type /endchat to disconnect.</blockquote>")
+            await message.bot.send_message(match.telegram_id, f"👥 <b>Study Buddy Found!</b>\nYou are now connected for <b>{safe_subject}</b>.\n<blockquote>Say hi! Type /endchat to disconnect.</blockquote>")
+        else:
+            # GHOST AI FALLBACK
+            db_user.study_buddy_subject = subject.capitalize()
+            await session.flush()
+            await message.answer(f"👥 <b>Study Buddy Found!</b>\nYou are now connected for <b>{safe_subject}</b>.\n<blockquote>Say hi! Type /endchat to disconnect.</blockquote>")
+
+@router.message(Command("endchat"))
+async def cmd_endchat(message: Message, db_user: User | None = None):
+    if not db_user or (not db_user.chat_partner_id and not db_user.study_buddy_subject):
+        await message.answer("You are not currently in a chat.")
+        return
+        
+    partner_id = db_user.chat_partner_id
+    is_ai = bool(db_user.study_buddy_subject)
+    
+    async with get_session() as session:
+        me = await session.execute(select(User).where(User.telegram_id == db_user.telegram_id))
+        me = me.scalar_one_or_none()
+        if me:
+            me.chat_partner_id = None
+            me.study_buddy_subject = None
+            
+        if partner_id:
+            partner = await session.execute(select(User).where(User.telegram_id == partner_id))
+            partner = partner.scalar_one_or_none()
+            if partner: partner.chat_partner_id = None
+        await session.flush()
+        
+    await message.answer("👋 <b>Chat Ended.</b>\nYou have been disconnected.")
+    if not is_ai and partner_id:
+        try:
+            await message.bot.send_message(partner_id, "👋 <b>Chat Ended.</b>\nYour Study Buddy has disconnected.")
+        except Exception:
+            pass
+
+@router.message(Command("leaderboard"))
+async def cmd_leaderboard(message: Message):
+    top_users = await user_service.get_leaderboard()
+    if not top_users:
+        await message.answer("📊 <b>Leaderboard is empty!</b>\nBe the first to earn Aura by uploading files!")
+        return
+        
+    text = "🏆 <b>Top Contributors</b>\n━━━━━━━━━━━━━━━━━━━━\n"
+    for i, u in enumerate(top_users, 1):
+        text += f"{i}. @{u.username or 'Unknown'} - <b>{u.aura} Aura</b>\n"
+        
+    await message.answer(text)
 
 @router.message(F.text == "🤝 Referral")
 @router.message(Command("referral"))
@@ -98,20 +200,20 @@ async def cmd_referral(message: Message, db_user: User | None = None):
         r_amount = int(r_amount_val) if r_amount_val and r_amount_val.isdigit() else 1
 
     if r_type == "premium":
-        reward_text = f"⭐ <b>{r_amount} Day(s) of Premium</b>\n🚀 Unlock unlimited searches & ad-free downloads!"
+        reward_text = f"⭐ <b>{r_amount} Day(s) of Premium</b> & +10 Aura"
     elif r_type == "daily_bonus":
-        reward_text = f"⚡ <b>+{r_amount} Bonus Searches Today</b>\n🔢 Get extra searches instantly for today!"
+        reward_text = f"⚡ <b>+{r_amount} Bonus Searches Today</b> & +10 Aura"
     else:
-        reward_text = f"🔍 <b>+{r_amount} Permanent Daily Searches</b>\n📈 Permanently increase your daily search limit!"
+        reward_text = f"🔍 <b>+{r_amount} Permanent Daily Searches</b> & +10 Aura"
 
     text = (
-        "<b>🤝 Refer & Earn Program</b>\n"
-        f"<blockquote>{reward_text}</blockquote>\n"
+        "<b>Referral Dashboard</b> 🤝\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"<blockquote><b>Reward:</b> {reward_text}</blockquote>\n"
         f"📊 <b>Your Statistics:</b>\n"
-        f"👥 Total Referrals: <b>{db_user.referral_count}</b>\n\n"
-        "🔗 <b>Your Unique Referral Link:</b>\n"
-        f"<code>{ref_link}</code>\n\n"
-        "<i>👉 Tap the link above to copy it, then share it with your friends!</i>"
+        f"👥 Total Invited: <b>{db_user.referral_count}</b> users\n"
+        f"✨ Total Aura: <b>{db_user.aura}</b>\n\n"
+        f"🔗 <b>Your Unique Link:</b>\n<code>{ref_link}</code>"
     )
     
     kb = InlineKeyboardBuilder()
@@ -124,13 +226,14 @@ async def cmd_referral(message: Message, db_user: User | None = None):
 @router.message(Command("help"))
 async def cmd_help(message: Message):
     text = (
-        "<b>📖 Help & Guide</b>\n\n"
-        "<blockquote>Just type what you're looking for (e.g., <code>physics notes</code>).</blockquote>\n"
-        "<b>🚀 Advanced Search:</b>\n"
-        "Use filters to narrow down results instantly!\n"
-        "<code>math subject:Physics class:Class 10 year:2023</code>\n\n"
-        "<b>📤 Upload:</b> Send a PDF to support the library.\n"
-        "<b>🎟️ Premium:</b> Get unlimited searches and ad-free downloads."
+        "<b>PrepCore Guide</b> 📖\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "<blockquote><b>1. Basic Search</b>\nJust type your query.\n"
+        "<i>Example:</i> <code>physics thermodynamics</code></blockquote>\n"
+        "<blockquote><b>2. Advanced Filters</b>\nNarrow down results instantly.\n"
+        "<i>Example:</i> <code>math subject:Algebra year:2023</code></blockquote>\n"
+        "<blockquote><b>3. Bounty (</b><code>/bounty</code><b>)</b>\nRequest a file you can't find. If someone uploads it, they get 50 Aura!</blockquote>\n"
+        "<blockquote><b>4. Study Buddy (</b><code>/studybuddy</code><b>)</b>\nFind a study partner instantly. If no one is available, PrepCore AI will help you!</blockquote>"
     )
     await message.answer(text)
 
@@ -141,7 +244,8 @@ async def cmd_about(message: Message):
         text_setting = text_setting.scalar_one_or_none()
         
     default_text = (
-        "<b>ℹ️ About PrepCore</b>\n"
+        "<b>About PrepCore</b> ℹ️\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
         "<blockquote>PrepCore is a searchable library of study materials. Search for PDFs, notes, and previous year questions.</blockquote>\n"
         "<i>Built with ❤️ using Python and FastAPI.</i>"
     )
@@ -156,9 +260,11 @@ async def cmd_usage(message: Message, db_user: User | None = None):
     search_limit = await user_service.get_user_search_limit(db_user)
     upload_limit = await user_service.get_user_upload_limit(db_user)
     text = (
-        "<b>📊 Your Daily Usage</b>\n\n"
-        f"🔍 Searches: <b>{db_user.search_count} / {search_limit}</b>\n"
-        f"📤 Uploads: <b>{db_user.upload_count} / {upload_limit}</b>\n\n"
+        "<b>Your Daily Usage</b> 📊\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"<blockquote>🔍 Searches: <b>{db_user.search_count} / {search_limit}</b>\n"
+        f"📤 Uploads: <b>{db_user.upload_count} / {upload_limit}</b></blockquote>\n"
+        f"✨ Aura: <b>{db_user.aura}</b>\n"
         "<i>Limits reset daily.</i>"
     )
     await message.answer(text)
@@ -177,12 +283,13 @@ async def cmd_premium(message: Message, db_user: User | None = None):
         text_setting = text_setting.scalar_one_or_none()
         
     if db_user and db_user.is_premium and db_user.premium_expiry:
-        status = f"✅ <b>Active</b> until {db_user.premium_expiry.strftime('%Y-%m-%d %H:%M UTC')}"
+        status = f"✅ <b>Active</b> until {escape(db_user.premium_expiry.strftime('%Y-%m-%d %H:%M UTC'))}"
     else:
         status = "❌ <b>Not active</b>"
 
     default_text = (
-        f"<b>🎟️ Premium Status</b>\n"
+        f"<b>Premium Status</b> 🎟️\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
         f"<blockquote>Status: {status}</blockquote>\n"
         f"<b>Premium Benefits:</b>\n"
         f"• Unlimited searches per day\n"
@@ -207,8 +314,27 @@ async def cmd_search(message: Message, command: CommandObject, db_user: User | N
     await _perform_search(message, query, db_user, page=1)
 
 @router.message(StateFilter(None), F.text & ~F.text.startswith("/"))
-async def text_search(message: Message, db_user: User | None = None):
+async def handle_text(message: Message, db_user: User | None = None):
     query = message.text.strip()
+    
+    # 1. Check if in a real Study Buddy Chat Relay
+    if db_user and db_user.chat_partner_id:
+        try:
+            await message.bot.send_message(db_user.chat_partner_id, f"👤 <b>Buddy:</b> {escape(query)}")
+            await message.answer("✅ <i>Sent.</i>")
+        except Exception:
+            await message.answer("❌ Failed to send message. Your buddy may have left.")
+        return
+        
+    # 2. Check if in Ghost AI Mode (User thinks it's a human)
+    if db_user and db_user.study_buddy_subject:
+        await message.bot.send_chat_action(message.chat.id, "typing")
+        from app.services.ai import get_ghost_ai_response
+        ai_reply = await get_ghost_ai_response(db_user.study_buddy_subject, query)
+        await message.answer(ai_reply) # Send raw text, no "AI:" prefix
+        return
+
+    # 3. Normal Search
     if query in ["🔍 Search", "📤 Upload", "🎟️ Premium", "🤝 Referral", "❓ Help"]:
         return
     if not is_valid_search_query(query):
@@ -243,64 +369,72 @@ def _parse_advanced_search(raw_query: str) -> tuple[str, Optional[str], Optional
     return clean_query, subject, class_name, year
 
 async def _perform_search(message: Message, query: str, db_user: User | None, page: int) -> None:
-    # 1. Show typing action
     await message.bot.send_chat_action(message.chat.id, "typing")
     
-    # 2. Send a temporary "Searching..." message for a premium app feel
-    status_msg = await message.answer(f"🔎 <i>Searching for <b>{escape(sanitise_text(query, 50))}</b>...</i>")
+    safe_query = escape(sanitise_text(query, 50))
+    status_msg = await message.answer(f"⚙️ <i>Scanning database for <b>{safe_query}</b>...</i>")
 
-    async with get_session() as session:
-        setting = await session.execute(select(BotSetting).where(BotSetting.key == "search_enabled"))
-        setting = setting.scalar_one_or_none()
-        if setting and setting.value == "false":
-            await status_msg.delete()
-            await message.answer("🚫 <b>Search is temporarily disabled by the admin.</b>\nPlease try again later.")
-            return
-
-        if db_user:
-            if not await user_service.check_search_limit(db_user):
-                limit = await user_service.get_user_search_limit(db_user)
+    try:
+        async with get_session() as session:
+            setting = await session.execute(select(BotSetting).where(BotSetting.key == "search_enabled"))
+            setting = setting.scalar_one_or_none()
+            if setting and setting.value == "false":
                 await status_msg.delete()
-                await message.answer(f"⛔ <b>Daily search limit reached ({limit}/{limit})</b>")
+                await message.answer("🚫 <b>Search is temporarily disabled by the admin.</b>\nPlease try again later.")
                 return
 
-        clean_q, subject_filter, class_filter, year_filter = _parse_advanced_search(query)
-        
-        results, total = await search_documents(
-            session, clean_q, page=page, 
-            subject=subject_filter, class_name=class_filter, year=year_filter
+            if db_user:
+                if not await user_service.check_search_limit(db_user):
+                    limit = await user_service.get_user_search_limit(db_user)
+                    await status_msg.delete()
+                    await message.answer(f"⛔ <b>Daily search limit reached ({limit}/{limit})</b>")
+                    return
+
+            clean_q, subject_filter, class_filter, year_filter = _parse_advanced_search(query)
+            
+            results, total = await search_documents(
+                session, clean_q, page=page, 
+                subject=subject_filter, class_name=class_filter, year=year_filter
+            )
+
+            if db_user:
+                await user_service.increment_search_count(db_user.telegram_id)
+                await user_service.log_search(session, db_user.id, query, total)
+
+        await status_msg.delete()
+
+        if not results:
+            await message.answer(f"🔍 No results found for <b>{escape(sanitise_text(query, 100))}</b>.\nTry different keywords or use /bounty to request it!")
+            return
+
+        query_key = uuid.uuid4().hex[:8]
+        cache = await get_cache()
+        cache_data = {
+            "query": clean_q, 
+            "subject": subject_filter, 
+            "class_name": class_filter, 
+            "year": year_filter
+        }
+        await cache.set(f"searchq:{query_key}", cache_data, ttl=1800)
+
+        per_page = settings.SEARCH_RESULTS_PER_PAGE
+        total_pages = max(1, (total + per_page - 1) // per_page)
+
+        text = (
+            f"<b>Search Results</b> 🔍\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"<blockquote>Query: <code>{escape(sanitise_text(query, 100))}</code>\n"
+            f"Found: <b>{total}</b> result(s) — Page {page}/{total_pages}</blockquote>\n"
+            f"<i>Select a file to download:</i>"
         )
-
-        if db_user:
-            await user_service.increment_search_count(db_user.telegram_id)
-            await user_service.log_search(session, db_user.id, query, total)
-
-    # 3. Delete the "Searching..." message
-    await status_msg.delete()
-
-    if not results:
-        await message.answer(f"🔍 No results found for <b>{escape(sanitise_text(query, 100))}</b>.\nTry different keywords or remove some filters.")
-        return
-
-    query_key = uuid.uuid4().hex[:8]
-    cache = await get_cache()
-    cache_data = {
-        "query": clean_q, 
-        "subject": subject_filter, 
-        "class_name": class_filter, 
-        "year": year_filter
-    }
-    await cache.set(f"searchq:{query_key}", cache_data, ttl=1800)
-
-    per_page = settings.SEARCH_RESULTS_PER_PAGE
-    total_pages = max(1, (total + per_page - 1) // per_page)
-
-    text = (
-        f"🔍 <b>Search: {escape(sanitise_text(query, 100))}</b>\n"
-        f"📊 Found <b>{total}</b> result(s) — Page {page}/{total_pages}\n\n"
-        f"<i>Select a file to download:</i>"
-    )
-    await message.answer(text, reply_markup=search_results_keyboard(results, query_key, page, total_pages))
+        await message.answer(text, reply_markup=search_results_keyboard(results, query_key, page, total_pages))
+        
+    except Exception as e:
+        logger.error("search_error", error=str(e), exc_info=True)
+        try:
+            await status_msg.edit_text("❌ An error occurred while searching. Please try again.")
+        except Exception:
+            pass
 
 @router.message(F.text == "📤 Upload")
 async def btn_upload(message: Message):
@@ -323,7 +457,25 @@ async def handle_document_upload(message: Message, state: FSMContext, db_user: U
     original_name = message.document.file_name or "document.pdf"
     await state.update_data(original_file_id=message.document.file_id, original_file_name=original_name, file_size=message.document.file_size)
     await state.set_state(UploadStates.waiting_file_name)
-    await message.answer(f"📤 <b>Upload Started</b>\n\nFile: <code>{escape(sanitise_text(original_name, 100))}</code>\n\nEnter a <b>file name</b> (or send /skip to use the original name):")
+    
+    tags = user_service.auto_tag_file(original_name)
+    await state.update_data(
+        subject=tags["subject"],
+        category=tags["category"],
+        class_name=tags["class_name"],
+        year=tags["year"]
+    )
+    
+    await message.answer(
+        f"📤 <b>Upload Started</b>\n\n"
+        f"📁 File: <code>{escape(sanitise_text(original_name, 100))}</code>\n\n"
+        f"🤖 <b>AI Auto-Tagged:</b>\n"
+        f"Subject: {tags['subject'] or 'N/A'}\n"
+        f"Category: {tags['category'] or 'N/A'}\n"
+        f"Class: {tags['class_name'] or 'N/A'}\n"
+        f"Year: {tags['year'] or 'N/A'}\n\n"
+        f"Send /skip to accept these tags, or type a new <b>file name</b>:"
+    )
 
 @router.message(UploadStates.waiting_file_name, F.text)
 async def upload_file_name(message: Message, state: FSMContext):
@@ -332,9 +484,29 @@ async def upload_file_name(message: Message, state: FSMContext):
         file_name = data.get("original_file_name", "document.pdf")
     else:
         file_name = sanitise_text(message.text, 500)
+        tags = user_service.auto_tag_file(file_name)
+        await state.update_data(
+            subject=tags["subject"],
+            category=tags["category"],
+            class_name=tags["class_name"],
+            year=tags["year"]
+        )
+        
     await state.update_data(file_name=file_name)
-    await state.set_state(UploadStates.waiting_subject)
-    await message.answer("Enter the <b>subject</b> (or /skip):")
+    data = await state.get_data()
+    if data.get("subject") and data.get("category"):
+        await state.set_state(UploadStates.waiting_keywords)
+        await message.answer(
+            f"✅ <b>Auto-Tagging Complete!</b>\n"
+            f"Subject: {data.get('subject')}\n"
+            f"Category: {data.get('category')}\n"
+            f"Class: {data.get('class_name') or 'N/A'}\n"
+            f"Year: {data.get('year') or 'N/A'}\n\n"
+            f"Enter <b>keywords</b> separated by commas (or /skip):"
+        )
+    else:
+        await state.set_state(UploadStates.waiting_subject)
+        await message.answer("Couldn't auto-detect subject. Enter the <b>subject</b> (or /skip):")
 
 @router.message(UploadStates.waiting_subject, F.text)
 async def upload_subject(message: Message, state: FSMContext):
@@ -356,7 +528,7 @@ async def upload_category_callback(callback, state: FSMContext):
     category = callback.data.split(":", 1)[1]
     await state.update_data(category=category)
     await state.set_state(UploadStates.waiting_class)
-    await callback.message.edit_text(f"✅ Category: {category}")
+    await callback.message.edit_text(f"✅ Category: {escape(category)}")
     await callback.message.answer("Enter the <b>Class</b> (e.g., Class 10, B.Sc 1st Year) or /skip:")
     await callback.answer()
 
@@ -405,15 +577,27 @@ async def upload_keywords(message: Message, state: FSMContext, bot: Bot, db_user
             year=data.get("year"), keywords=keywords, description=None,
             uploaded_by=db_user.telegram_id if db_user else None, approved=approved
         )
+        
+        matched_bounty = await user_service.check_bounty_match(session, doc.file_name, db_user.telegram_id if db_user else 0)
+        if matched_bounty:
+            matched_bounty.fulfilled = True
+            await user_service.add_aura(db_user.telegram_id, 50)
+            await session.flush()
+            
+            try:
+                await bot.send_message(matched_bounty.requester_id, f"🎯 <b>Bounty Fulfilled!</b>\nSomeone uploaded a file matching your request: <i>{escape(matched_bounty.query)}</i>\n\nFile: <code>{escape(doc.file_name)}</code>")
+            except Exception:
+                pass
+
         if db_user: await user_service.increment_upload_count(db_user.telegram_id)
 
     if approved:
-        await status_msg.edit_text(f"✅ <b>Upload Successful!</b>\n\n📁 {escape(sanitise_text(doc.file_name, 100))}\n\nThank you for supporting the library! 🙏")
+        reward_text = f"✅ <b>Upload Successful!</b>\n\n📁 {escape(sanitise_text(doc.file_name, 100))}\n\nThank you for supporting the library! 🙏"
+        if matched_bounty:
+            reward_text += "\n\n🎉 <b>BONUS:</b> You fulfilled a bounty and earned <b>50 Aura</b>!"
+        await status_msg.edit_text(reward_text)
     else:
         await status_msg.edit_text(f"⏳ <b>Upload Received — Pending Approval</b>\n\n📁 {escape(sanitise_text(doc.file_name, 100))}\n\nYour file is awaiting admin approval.")
-        for admin_id in settings.admin_ids_list:
-            try: await bot.send_message(admin_id, f"⏳ <b>New pending upload</b>\nDoc ID: {doc.id}\nUse /admin to approve.")
-            except Exception: pass
 
 @router.message(Command("cancel"), StateFilter(None))
 async def cancel_idle(message: Message):
@@ -425,7 +609,6 @@ async def cancel_fsm(message: Message, state: FSMContext):
     show_prem = await _is_premium_enabled()
     await message.answer("❌ Operation cancelled. What would you like to do next?", reply_markup=main_menu_kb(show_premium=show_prem))
 
-# Catch-all for unrecognized commands
 @router.message(F.text.startswith("/"))
 async def unknown_command(message: Message):
     await message.answer("⚠️ I don't recognize this command. Please use the menu below!")
