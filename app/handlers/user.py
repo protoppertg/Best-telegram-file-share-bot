@@ -119,24 +119,34 @@ async def cmd_studybuddy(message: Message, command: CommandObject, db_user: User
     safe_subject = escape(subject.capitalize())
     
     async with get_session() as session:
+        # We MUST query the user inside this session to safely update them
+        me_res = await session.execute(select(User).where(User.telegram_id == db_user.telegram_id))
+        me = me_res.scalar_one_or_none()
+        
+        if not me:
+            await message.answer("Error: User profile not found.")
+            return
+            
+        # Find a real match
         match_res = await session.execute(
             select(User).where(User.study_buddy_subject == subject.capitalize(), User.telegram_id != db_user.telegram_id).limit(1)
         )
         match = match_res.scalar_one_or_none()
         
         if match:
+            # Connect them in-bot
             match.study_buddy_subject = None
             match.chat_partner_id = db_user.telegram_id
             
-            db_user.study_buddy_subject = None
-            db_user.chat_partner_id = match.telegram_id
+            me.study_buddy_subject = None
+            me.chat_partner_id = match.telegram_id
             await session.flush()
             
             await message.answer(f"👥 <b>Study Buddy Found!</b>\nYou are now connected for <b>{safe_subject}</b>.\n<blockquote>Say hi! Type /endchat to disconnect.</blockquote>")
             await message.bot.send_message(match.telegram_id, f"👥 <b>Study Buddy Found!</b>\nYou are now connected for <b>{safe_subject}</b>.\n<blockquote>Say hi! Type /endchat to disconnect.</blockquote>")
         else:
             # GHOST AI FALLBACK
-            db_user.study_buddy_subject = subject.capitalize()
+            me.study_buddy_subject = subject.capitalize()
             await session.flush()
             await message.answer(f"👥 <b>Study Buddy Found!</b>\nYou are now connected for <b>{safe_subject}</b>.\n<blockquote>Say hi! Type /endchat to disconnect.</blockquote>")
 
@@ -313,12 +323,18 @@ async def cmd_search(message: Message, command: CommandObject, db_user: User | N
         return
     await _perform_search(message, query, db_user, page=1)
 
+# Intercept messages for Chat Relay or Ghost AI
 @router.message(StateFilter(None), F.text & ~F.text.startswith("/"))
 async def handle_text(message: Message, db_user: User | None = None):
     query = message.text.strip()
     
     # 1. Check if in a real Study Buddy Chat Relay
     if db_user and db_user.chat_partner_id:
+        # CHAT MODERATION: Block links, usernames, and phone numbers
+        if re.search(r'http[s]?://|t\.me/|@|(\+?\d{10,})', query, re.I):
+            await message.answer("🚫 <b>Warning!</b>\nSharing external links, usernames, or phone numbers is not allowed in Study Buddy chat to prevent spam.")
+            return
+            
         try:
             await message.bot.send_message(db_user.chat_partner_id, f"👤 <b>Buddy:</b> {escape(query)}")
             await message.answer("✅ <i>Sent.</i>")
