@@ -5,10 +5,10 @@ import httpx
 from app.config import settings
 from app.utils.logger import logger
 
-async def get_ghost_ai_response(subject: str, user_message: str) -> str:
+async def get_ghost_ai_response(ai_name: str, subject: str, user_message: str) -> str:
     """Generates a response acting like a student, saving tokens."""
     if not settings.AI_API_KEY:
-        return "Hmm, I'm not sure about that. Let me check the book."
+        return "Hey! I'm a bit busy right now, what did you ask?"
         
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -18,11 +18,11 @@ async def get_ghost_ai_response(subject: str, user_message: str) -> str:
                 json={
                     "model": settings.AI_MODEL,
                     "max_tokens": 60,
-                    "temperature": 0.7,
+                    "temperature": 0.8,
                     "messages": [
                         {
                             "role": "system", 
-                            "content": f"You are a student studying {subject}. You are chatting informally on Telegram with another student. Be helpful, concise (1-2 sentences), and do NOT use markdown formatting. Do not sound like an AI."
+                            "content": f"Your name is {ai_name}. You are an Indian student studying {subject}. You are chatting informally on Telegram with another student. Be friendly, concise (1-2 sentences), and do NOT use markdown formatting. Never say you are an AI or a language model. If they say 'hi', say hi back and mention your name."
                         },
                         {
                             "role": "user", 
@@ -32,7 +32,7 @@ async def get_ghost_ai_response(subject: str, user_message: str) -> str:
                 }
             )
             data = resp.json()
-            return data.get("choices", [{}])[0].get("message", {}).get("content", "Wait, what page is that on?").strip()
+            return data.get("choices", [{}])[0].get("message", {}).get("content", "Hmm, I'm not sure about that. Let me check the book.").strip()
     except Exception as e:
         logger.error("ghost_ai_error", error=str(e))
         return "Wait, I'm getting distracted. What did you ask?"
