@@ -49,10 +49,8 @@ async def _is_premium_enabled() -> bool:
 
 def detect_language(text: str) -> str:
     """Detects if the text is Hinglish or English."""
-    # Check for Devanagari script (Hindi)
     if re.search(r'[\u0900-\u097F]', text):
         return "Hindi"
-    # Check for common Hinglish words/patterns
     hinglish_words = ['hai', 'kya', 'kaise', 'mera', 'tera', 'aaj', 'kal', 'padhai', 'exam', 'bhai', 'yaar', 'nahi', 'haan']
     words = text.lower().split()
     if any(word in hinglish_words for word in words):
@@ -168,6 +166,10 @@ async def cmd_studybuddy(message: Message, command: CommandObject, db_user: User
             me.ai_language = "English" # Default to English, will update on first message
             await session.flush()
             
+            # Clear any old AI chat history
+            cache = await get_cache()
+            await cache.delete(f"ai_chat_history:{db_user.telegram_id}")
+            
             # Introduce the AI with its fake name
             await message.answer(f"👥 <b>Study Buddy Found!</b>\nYou are now connected with <b>{ai_name}</b> for <b>{safe_subject}</b>.\n<blockquote>Say hi! Type /endchat to disconnect.</blockquote>")
 
@@ -187,13 +189,17 @@ async def cmd_endchat(message: Message, db_user: User | None = None):
             me.chat_partner_id = None
             me.study_buddy_subject = None
             me.ai_name = None 
-            me.ai_language = None # Clear AI language
+            me.ai_language = None
             
         if partner_id:
             partner = await session.execute(select(User).where(User.telegram_id == partner_id))
             partner = partner.scalar_one_or_none()
             if partner: partner.chat_partner_id = None
         await session.flush()
+        
+    # Clear AI chat history from cache
+    cache = await get_cache()
+    await cache.delete(f"ai_chat_history:{db_user.telegram_id}")
         
     await message.answer("👋 <b>Chat Ended.</b>\nYou have been disconnected.")
     if not is_ai and partner_id:
@@ -379,11 +385,25 @@ async def handle_text(message: Message, db_user: User | None = None):
                     if me:
                         me.ai_language = detected_lang
                         await session.flush()
-                db_user.ai_language = detected_lang # Update the object in memory for immediate use
+                db_user.ai_language = detected_lang
                 
+        # Fetch chat history from cache (Sliding Window Memory)
+        cache = await get_cache()
+        history_key = f"ai_chat_history:{db_user.telegram_id}"
+        chat_history = await cache.get(history_key) or []
+        
         from app.services.ai import get_ghost_ai_response
-        # Pass the AI's name, subject, language, and message!
-        ai_reply = await get_ghost_ai_response(db_user.ai_name, db_user.study_buddy_subject, db_user.ai_language or "English", query)
+        # Pass the history to the AI!
+        ai_reply = await get_ghost_ai_response(db_user.ai_name, db_user.study_buddy_subject, db_user.ai_language or "English", query, chat_history)
+        
+        # Update history with the new user message and AI reply
+        chat_history.append({"role": "user", "content": query})
+        chat_history.append({"role": "assistant", "content": ai_reply})
+        
+        # Keep only the last 4 messages (2 turns) to save API tokens
+        chat_history = chat_history[-4:]
+        await cache.set(history_key, chat_history, ttl=3600) # Cache for 1 hour
+        
         await message.answer(ai_reply) # Send raw text, no "AI:" prefix
         return
 
