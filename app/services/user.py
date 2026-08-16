@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
-from typing import Optional
+from typing import Optional, List
+import re
 
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.models import SearchLog, User, BotSetting
+from app.models import SearchLog, User, BotSetting, Bounty
 from app.database import get_session
 from app.utils.logger import logger
 
@@ -44,7 +45,6 @@ async def reset_daily_counts_if_needed(session: AsyncSession, user: User) -> boo
 
 async def get_user_search_limit(user: User) -> int:
     async with get_session() as session:
-        # OPTIMIZED: Fetch all settings in one single DB query
         res = await session.execute(select(BotSetting).where(BotSetting.key.in_([
             "premium_enabled", "free_search_limit", "premium_search_limit", "referral_reward_type", "referral_reward_amount"
         ])))
@@ -78,7 +78,6 @@ async def check_upload_limit(user: User) -> bool:
     return user.upload_count < await get_user_upload_limit(user)
 
 async def increment_search_count(telegram_id: int) -> None:
-    # ULTRA-FAST ATOMIC UPDATE: No need to load the user object, just increment directly in DB
     try:
         async with get_session() as session:
             await session.execute(
@@ -89,7 +88,6 @@ async def increment_search_count(telegram_id: int) -> None:
         logger.error("increment_search_error", error=str(e))
 
 async def increment_upload_count(telegram_id: int) -> None:
-    # ULTRA-FAST ATOMIC UPDATE: No need to load the user object, just increment directly in DB
     try:
         async with get_session() as session:
             await session.execute(
@@ -98,6 +96,16 @@ async def increment_upload_count(telegram_id: int) -> None:
             )
     except Exception as e:
         logger.error("increment_upload_error", error=str(e))
+
+async def add_aura(telegram_id: int, amount: int = 1):
+    try:
+        async with get_session() as session:
+            await session.execute(
+                text("UPDATE users SET aura = aura + :amt WHERE telegram_id = :tid"),
+                {"tid": telegram_id, "amt": amount}
+            )
+    except Exception as e:
+        logger.error("add_aura_error", error=str(e))
 
 async def add_referral(telegram_id: int):
     async with get_session() as session:
@@ -111,6 +119,7 @@ async def add_referral(telegram_id: int):
         user = result.scalar_one_or_none()
         if user:
             user.referral_count += 1
+            user.aura += 10
             
             if r_type == "premium":
                 now = datetime.now(timezone.utc)
@@ -174,6 +183,43 @@ async def reset_search_count(telegram_id: int) -> bool:
         await session.flush()
         return True
 
+async def get_leaderboard() -> List[User]:
+    async with get_session() as session:
+        res = await session.execute(select(User).where(User.aura > 0).order_by(User.aura.desc()).limit(10))
+        return res.scalars().all()
+
+async def check_bounty_match(session: AsyncSession, file_name: str, uploader_id: int) -> Optional[Bounty]:
+    res = await session.execute(select(Bounty).where(Bounty.fulfilled == False, Bounty.requester_id != uploader_id))
+    active_bounties = res.scalars().all()
+    
+    file_lower = file_name.lower()
+    for bounty in active_bounties:
+        query_words = [w.lower() for w in bounty.query.split() if len(w) > 2]
+        if not query_words: continue
+        
+        matches = sum(1 for w in query_words if w in file_lower)
+        match_percentage = matches / len(query_words)
+        
+        if match_percentage >= 0.7:
+            return bounty
+    return None
+
+def auto_tag_file(file_name: str) -> dict:
+    tags = {"subject": None, "category": None, "class_name": None, "year": None}
+    year_match = re.search(r'(20\d{2})', file_name)
+    if year_match: tags["year"] = int(year_match.group(1))
+    class_match = re.search(r'(?:class|cls)[\s_-]*(\d{1,2})', file_name, re.I)
+    if class_match: tags["class_name"] = f"Class {class_match.group(1)}"
+    if re.search(r'pyq|previous year|question paper|solved', file_name, re.I): tags["category"] = "PYQ"
+    elif re.search(r'notes|guide|handbook|solutions', file_name, re.I): tags["category"] = "Notes"
+    elif re.search(r'book|textbook', file_name, re.I): tags["category"] = "Book"
+    subjects = ["physics", "chemistry", "math", "maths", "biology", "english", "history", "geography", "cs", "computer", "economics"]
+    for sub in subjects:
+        if sub in file_name.lower():
+            tags["subject"] = sub.capitalize()
+            break
+    return tags
+
 async def get_stats(session: AsyncSession) -> dict:
     from app.models import Document
     total_docs = (await session.execute(select(func.count(Document.id)))).scalar() or 0
@@ -183,9 +229,15 @@ async def get_stats(session: AsyncSession) -> dict:
     today = date.today()
     searches_today = (await session.execute(select(func.count(SearchLog.id)).where(func.date(SearchLog.created_at) == today))).scalar() or 0
     uploads_today = (await session.execute(select(func.count(Document.id)).where(func.date(Document.created_at) == today))).scalar() or 0
+    
+    # Social Stats for Admin Panel
+    active_bounties = (await session.execute(select(func.count(Bounty.id)).where(Bounty.fulfilled == False))).scalar() or 0
+    active_buddies = (await session.execute(select(func.count(User.id)).where((User.chat_partner_id != None) | (User.study_buddy_subject != None)))).scalar() or 0
+    
     return {
         "total_documents": total_docs, "total_users": total_users, "premium_users": premium_users,
         "searches_today": searches_today, "pending_documents": pending_docs, "uploads_today": uploads_today,
+        "active_bounties": active_bounties, "active_buddies": active_buddies
     }
 
 async def log_search(session: AsyncSession, user_id: Optional[int], query: str, result_count: int) -> None:
