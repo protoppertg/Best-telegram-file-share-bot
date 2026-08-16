@@ -5,7 +5,7 @@ import httpx
 from app.config import settings
 from app.utils.logger import logger
 
-async def get_ghost_ai_response(ai_name: str, subject: str, language: str, user_message: str) -> str:
+async def get_ghost_ai_response(ai_name: str, subject: str, language: str, user_message: str, chat_history: list) -> str:
     """Generates a response acting like a student, saving tokens."""
     if not settings.AI_API_KEY:
         logger.warning("AI_API_KEY is missing in Render environment variables.")
@@ -13,23 +13,28 @@ async def get_ghost_ai_response(ai_name: str, subject: str, language: str, user_
         
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
+            # Build the messages payload with history
+            messages_payload = [
+                {
+                    "role": "system", 
+                    "content": f"Your name is {ai_name}. You are an Indian student studying {subject}. You are chatting informally on Telegram with another student. You already introduced yourself, so DO NOT repeat your name. Reply in {language}. Keep responses to 1-2 short, natural sentences. Never say you are an AI or a language model."
+                }
+            ]
+            
+            # Add the sliding window history (last 4 messages)
+            messages_payload.extend(chat_history)
+            
+            # Add the current user message
+            messages_payload.append({"role": "user", "content": user_message})
+            
             resp = await client.post(
                 f"{settings.AI_BASE_URL}/chat/completions",
                 headers={"Authorization": f"Bearer {settings.AI_API_KEY}"},
                 json={
                     "model": settings.AI_MODEL,
-                    "max_tokens": 60,
+                    "max_tokens": 60, # Hard limit to save credits
                     "temperature": 0.8,
-                    "messages": [
-                        {
-                            "role": "system", 
-                            "content": f"Your name is {ai_name}. You are an Indian student studying {subject}. You are chatting informally on Telegram with another student. Be friendly, concise (1-2 sentences), and do NOT use markdown formatting. Never say you are an AI or a language model. If they say 'hi', say hi back and mention your name. You MUST reply in {language}."
-                        },
-                        {
-                            "role": "user", 
-                            "content": user_message
-                        }
-                    ]
+                    "messages": messages_payload
                 }
             )
             
