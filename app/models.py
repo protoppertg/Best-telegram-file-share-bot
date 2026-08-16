@@ -27,6 +27,7 @@ class User(Base):
     aura: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     study_buddy_subject: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     chat_partner_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    ai_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     last_reset_date: Mapped[date] = mapped_column(Date, default=func.current_date(), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
