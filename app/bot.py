@@ -41,6 +41,7 @@ def setup_dispatcher(dispatcher: Dispatcher = dp) -> None:
     logger.info("dispatcher_configured")
 
 async def on_startup() -> None:
+    # Register the command menu (the list that appears when you type /)
     commands = [
         BotCommand(command="/start", description="🚀 Start the bot"),
         BotCommand(command="/usage", description="📊 Check your usage limits"),
@@ -48,6 +49,10 @@ async def on_startup() -> None:
         BotCommand(command="/premium", description="🎟️ View Premium status"),
         BotCommand(command="/cancel", description="❌ Cancel current action"),
         BotCommand(command="/admin", description="🔧 Admin Panel (Admins only)"),
+        BotCommand(command="/bounty", description="🎯 Request a file"),
+        BotCommand(command="/studybuddy", description="👥 Find a study partner"),
+        BotCommand(command="/endchat", description="🚪 Leave Study Buddy chat"),
+        BotCommand(command="/leaderboard", description="🏆 View top contributors")
     ]
     await bot.set_my_commands(commands)
 
