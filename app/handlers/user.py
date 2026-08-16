@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 import re
+import random
 from html import escape
 from typing import Any, Optional
 
@@ -28,6 +29,9 @@ from app.utils.logger import logger
 from app.utils.validators import is_valid_search_query, parse_keywords, parse_year, sanitise_text, validate_pdf_document
 
 router = Router()
+
+# Random Indian names for the Ghost AI
+GHOST_NAMES = ["Rahul", "Priya", "Amit", "Sneha", "Rohan", "Anjali", "Vikram", "Pooja", "Arjun", "Kavya", "Sanjay", "Neha"]
 
 class UploadStates(StatesGroup):
     waiting_file_name = State()
@@ -119,7 +123,6 @@ async def cmd_studybuddy(message: Message, command: CommandObject, db_user: User
     safe_subject = escape(subject.capitalize())
     
     async with get_session() as session:
-        # We MUST query the user inside this session to safely update them
         me_res = await session.execute(select(User).where(User.telegram_id == db_user.telegram_id))
         me = me_res.scalar_one_or_none()
         
@@ -127,7 +130,7 @@ async def cmd_studybuddy(message: Message, command: CommandObject, db_user: User
             await message.answer("Error: User profile not found.")
             return
             
-        # Find a real match
+        # 1. Try to find a real user first
         match_res = await session.execute(
             select(User).where(User.study_buddy_subject == subject.capitalize(), User.telegram_id != db_user.telegram_id).limit(1)
         )
@@ -142,13 +145,18 @@ async def cmd_studybuddy(message: Message, command: CommandObject, db_user: User
             me.chat_partner_id = match.telegram_id
             await session.flush()
             
-            await message.answer(f"👥 <b>Study Buddy Found!</b>\nYou are now connected for <b>{safe_subject}</b>.\n<blockquote>Say hi! Type /endchat to disconnect.</blockquote>")
-            await message.bot.send_message(match.telegram_id, f"👥 <b>Study Buddy Found!</b>\nYou are now connected for <b>{safe_subject}</b>.\n<blockquote>Say hi! Type /endchat to disconnect.</blockquote>")
+            # Use real usernames for introduction
+            await message.answer(f"👥 <b>Study Buddy Found!</b>\nYou are now connected with <b>@{escape(match.username or 'Buddy')}</b> for <b>{safe_subject}</b>.\n<blockquote>Say hi! Type /endchat to disconnect.</blockquote>")
+            await message.bot.send_message(match.telegram_id, f"👥 <b>Study Buddy Found!</b>\nYou are now connected with <b>@{escape(message.from_user.username or 'Buddy')}</b> for <b>{safe_subject}</b>.\n<blockquote>Say hi! Type /endchat to disconnect.</blockquote>")
         else:
-            # GHOST AI FALLBACK
+            # 2. GHOST AI FALLBACK
+            ai_name = random.choice(GHOST_NAMES)
             me.study_buddy_subject = subject.capitalize()
+            me.ai_name = ai_name
             await session.flush()
-            await message.answer(f"👥 <b>Study Buddy Found!</b>\nYou are now connected for <b>{safe_subject}</b>.\n<blockquote>Say hi! Type /endchat to disconnect.</blockquote>")
+            
+            # Introduce the AI with its fake name
+            await message.answer(f"👥 <b>Study Buddy Found!</b>\nYou are now connected with <b>{ai_name}</b> for <b>{safe_subject}</b>.\n<blockquote>Say hi! Type /endchat to disconnect.</blockquote>")
 
 @router.message(Command("endchat"))
 async def cmd_endchat(message: Message, db_user: User | None = None):
@@ -165,6 +173,7 @@ async def cmd_endchat(message: Message, db_user: User | None = None):
         if me:
             me.chat_partner_id = None
             me.study_buddy_subject = None
+            me.ai_name = None # Clear AI name
             
         if partner_id:
             partner = await session.execute(select(User).where(User.telegram_id == partner_id))
@@ -342,11 +351,12 @@ async def handle_text(message: Message, db_user: User | None = None):
             await message.answer("❌ Failed to send message. Your buddy may have left.")
         return
         
-    # 2. Check if in Ghost AI Mode (User thinks it's a human)
-    if db_user and db_user.study_buddy_subject:
+    # 2. Check if in Ghost AI Mode
+    if db_user and db_user.study_buddy_subject and db_user.ai_name:
         await message.bot.send_chat_action(message.chat.id, "typing")
         from app.services.ai import get_ghost_ai_response
-        ai_reply = await get_ghost_ai_response(db_user.study_buddy_subject, query)
+        # Pass the AI's name so it remembers who it is!
+        ai_reply = await get_ghost_ai_response(db_user.ai_name, db_user.study_buddy_subject, query)
         await message.answer(ai_reply) # Send raw text, no "AI:" prefix
         return
 
