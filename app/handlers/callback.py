@@ -18,6 +18,7 @@ from app.services import document as doc_service
 from app.services.cache import get_cache
 from app.services.search import search_documents
 from app.services.shortlink import get_shortlink
+from app.services.user import add_aura
 from app.utils.keyboards import after_file_keyboard, search_results_keyboard, main_menu_kb
 from app.utils.logger import logger
 from app.utils.validators import sanitise_text
@@ -33,7 +34,7 @@ async def _get_settings(session) -> dict:
         "premium_enabled": True
     }
     for row in settings_rows:
-        val = row.value or "" # Fail-safe for None values
+        val = row.value or ""
         if row.key == "auto_delete_enabled" and val == "true": data["auto_delete_enabled"] = True
         elif row.key == "auto_delete_seconds" and val.isdigit(): data["auto_delete_seconds"] = int(val)
         elif row.key == "protect_forwarding" and val == "true": data["protect_forwarding"] = True
@@ -52,6 +53,21 @@ async def _schedule_auto_delete(bot: Bot, chat_id: int, message_id: int, delay: 
 @router.callback_query(F.data == "noop")
 async def noop_callback(callback: CallbackQuery):
     await callback.answer()
+
+@router.callback_query(F.data.startswith("kudos:"))
+async def give_kudos(callback: CallbackQuery, bot: Bot):
+    try:
+        uploader_id = int(callback.data.split(":")[1])
+        await add_aura(uploader_id, 1)
+        
+        try:
+            await bot.send_message(uploader_id, f"🙏 <b>Someone thanked you!</b>\nYour file was downloaded and a user said thanks. You earned <b>1 Aura</b>.")
+        except Exception:
+            pass
+            
+        await callback.answer("🙏 Thanks sent! The uploader earned 1 Aura.", show_alert=True)
+    except Exception:
+        await callback.answer("Error sending kudos.", show_alert=True)
 
 @router.callback_query(F.data == "check_sub")
 async def check_sub_callback(callback: CallbackQuery, bot: Bot):
@@ -84,16 +100,18 @@ async def check_sub_callback(callback: CallbackQuery, bot: Bot):
             prem_enabled_setting = prem_enabled_setting.scalar_one_or_none()
             show_prem = not (prem_enabled_setting and prem_enabled_setting.value == "false")
             
+            user_name = escape(callback.from_user.first_name or "Student")
             default_text = (
-                "✨ <b>Welcome to PrepCore!</b> ✨\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
-                "📚 Your ultimate library for study materials.\n"
-                "Find notes, PYQs, and books in seconds!\n\n"
-                "🛠 <b>How to use me:</b>\n"
-                "┣👉 <b>Search:</b> Type keywords or use advanced filters.\n"
-                "┣👉 <b>Upload:</b> Send a PDF to support the community.\n"
-                "┗👉 <b>Premium:</b> Unlock unlimited searches & ad-free downloads.\n\n"
-                "<i>Ready to dive in? Just type a keyword below!</i>"
+                f"<b>PrepCore Hub</b> ✨\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"Welcome, <b>{user_name}</b>!\n"
+                f"<blockquote>Your ultimate library for study materials. Find notes, PYQs, and books in seconds.</blockquote>\n"
+                f"┌ 📚 <b>Library</b>: Thousands of files available.\n"
+                f"├ 🔍 <b>Smart Search</b>: Use filters like <code>class:10</code>.\n"
+                f"├ 🎯 <b>Bounty</b>: Request files via /bounty\n"
+                f"├ 👥 <b>Study Buddy</b>: Find a partner via /studybuddy\n"
+                f"└ 🎟️ <b>Premium</b>: Unlock unlimited power.\n\n"
+                f"<i>What are we studying today?</i>"
             )
             text = text_setting.value if text_setting and text_setting.value else default_text
             try: await callback.message.delete()
@@ -111,18 +129,21 @@ async def _send_file_to_user(bot: Bot, callback: CallbackQuery, doc, bot_setting
     protect = bot_settings["protect_forwarding"]
     post_file_msg = bot_settings["post_file_message"]
     
-    # 1. Send a premium "Receipt" message while the file is being fetched
+    safe_name = escape(sanitise_text(doc.file_name, 80))
+    safe_subject = escape(doc.subject or 'N/A')
+    safe_category = escape(doc.category or 'N/A')
+    
     receipt_text = (
-        f"📥 <b>Preparing your file...</b>\n"
-        f"📁 <code>{escape(sanitise_text(doc.file_name, 80))}</code>\n"
-        f"📚 {escape(doc.subject or 'N/A')} | 🏷️ {escape(doc.category or 'N/A')}"
+        f"<b>Preparing Document</b> 📥\n"
+        f"<blockquote><b>File:</b> {safe_name}\n"
+        f"<b>Subject:</b> {safe_subject}</blockquote>\n"
+        f"<i>Fetching from secure storage...</i>"
     )
     receipt_msg = await bot.send_message(chat_id=callback.from_user.id, text=receipt_text)
     
-    # 2. Send the actual file
     caption_parts = []
-    if doc.subject: caption_parts.append(f"📚 {escape(doc.subject)}")
-    if doc.category: caption_parts.append(f"🏷️ {escape(doc.category)}")
+    if doc.subject: caption_parts.append(f"📚 {safe_subject}")
+    if doc.category: caption_parts.append(f"🏷️ {safe_category}")
     caption = " | ".join(caption_parts) if caption_parts else None
     
     sent_file_msg = await bot.send_document(
@@ -131,7 +152,6 @@ async def _send_file_to_user(bot: Bot, callback: CallbackQuery, doc, bot_setting
 
     msg_ids_to_delete = [sent_file_msg.message_id]
 
-    # 3. Edit the receipt message to show success
     try:
         await receipt_msg.delete()
     except Exception:
@@ -148,8 +168,18 @@ async def _send_file_to_user(bot: Bot, callback: CallbackQuery, doc, bot_setting
         for msg_id in msg_ids_to_delete:
             asyncio.create_task(_schedule_auto_delete(bot, callback.from_user.id, msg_id, ad_seconds))
 
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    kb = InlineKeyboardBuilder()
+    
+    if doc.uploaded_by:
+        kb.button(text="🙏 Say Thanks", callback_data=f"kudos:{doc.uploaded_by}")
+        
+    kb.button(text="⬅️ Back to results", callback_data=f"search:{query_key}:{page}")
+    kb.button(text="🔍 New Search", callback_data="search_again")
+    kb.adjust(1)
+
     try:
-        await callback.message.edit_text(f"✅ <b>File sent successfully.</b>", reply_markup=after_file_keyboard(query_key, page))
+        await callback.message.edit_text(f"✅ <b>File sent successfully.</b>\n\n<i>Did this file help you? Say thanks to the uploader!</i>", reply_markup=kb.as_markup())
     except TelegramBadRequest: pass
 
 @router.callback_query(F.data.startswith("getfile:"))
@@ -237,6 +267,8 @@ async def search_pagination(callback: CallbackQuery):
     class_name = cache_data.get("class_name")
     year = cache_data.get("year")
 
+    await callback.answer("Loading page...")
+    
     async with get_session() as session:
         results, total = await search_documents(session, query, page=page, subject=subject, class_name=class_name, year=year)
 
@@ -247,8 +279,8 @@ async def search_pagination(callback: CallbackQuery):
     per_page = settings.SEARCH_RESULTS_PER_PAGE
     total_pages = max(1, (total + per_page - 1) // per_page)
     
-    display_q = "All files" if query.strip() == " " else query
-    header_text = f"🔍 <b>Search: {escape(sanitise_text(display_q, 100))}</b>"
+    display_q = "All files" if query.strip() == " " else escape(sanitise_text(query, 100))
+    header_text = f"🔍 <b>Search: {display_q}</b>"
     if subject: header_text += f"\n📚 Subject: {escape(subject)}"
     if class_name: header_text += f"\n🎓 Class: {escape(class_name)}"
     if year: header_text += f"\n📅 Year: {year}"
@@ -258,4 +290,3 @@ async def search_pagination(callback: CallbackQuery):
     try:
         await callback.message.edit_text(text, reply_markup=search_results_keyboard(results, query_key, page, total_pages))
     except TelegramBadRequest: pass
-    await callback.answer()
