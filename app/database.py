@@ -43,6 +43,7 @@ async def init_db():
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS aura INTEGER DEFAULT 0",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS study_buddy_subject VARCHAR(255)",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS chat_partner_id BIGINT",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS ai_name VARCHAR(255)",
             "ALTER TABLE documents ADD COLUMN IF NOT EXISTS class_name VARCHAR(100)",
             "ALTER TABLE documents ADD COLUMN IF NOT EXISTS keywords TEXT[]",
             "ALTER TABLE bot_settings ADD COLUMN IF NOT EXISTS value TEXT",
