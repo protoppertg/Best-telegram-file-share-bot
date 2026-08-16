@@ -27,7 +27,6 @@ router = APIRouter(prefix="/admin")
 BASE_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
-# Super Admin Permissions (always allowed)
 SUPER_PERMS = ["stats", "users", "documents", "broadcast", "forcesub", "admins"]
 
 async def verify_admin(request: Request):
@@ -37,7 +36,6 @@ async def verify_admin(request: Request):
     return True
 
 async def log_admin_action(request: Request, action: str, target: str = ""):
-    """Helper to safely log admin actions"""
     try:
         admin_id = request.session.get("is_admin", "unknown")
         admin_name = "Super Admin" if admin_id == "super" else "Sub-Admin"
@@ -75,6 +73,11 @@ async def repair_database():
         await session.execute(text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS class_name VARCHAR(100)"))
         await session.execute(text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS keywords TEXT[]"))
         await session.execute(text("ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS password VARCHAR(255)"))
+        await session.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS aura INTEGER DEFAULT 0"))
+        await session.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS study_buddy_subject VARCHAR(255)"))
+        await session.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS chat_partner_id BIGINT"))
+        await session.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS ai_name VARCHAR(255)"))
+        await session.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS ai_language VARCHAR(50)"))
 
 @router.get("/login", response_class=templates.TemplateResponse)
 async def admin_login(request: Request):
@@ -143,6 +146,7 @@ async def admin_settings(request: Request):
         shortlink_api_key = await get_setting(session, "shortlink_api_key", "")
         referral_reward_type = await get_setting(session, "referral_reward_type", "searches")
         referral_reward_amount = await get_setting(session, "referral_reward_amount", "1")
+        ai_study_buddy_enabled = await get_setting(session, "ai_study_buddy_enabled", "true")
         channels = await get_force_sub_channels(session)
         
     return templates.TemplateResponse(request, "settings.html", {
@@ -153,11 +157,12 @@ async def admin_settings(request: Request):
         "free_search_limit": free_search_limit, "prem_search_limit": prem_search_limit,
         "shortlink_enabled": shortlink_enabled == "true", "shortlink_api_url": shortlink_api_url,
         "shortlink_api_key": shortlink_api_key, "referral_reward_type": referral_reward_type,
-        "referral_reward_amount": referral_reward_amount, "channels": channels, "active": "settings"
+        "referral_reward_amount": referral_reward_amount, "channels": channels, 
+        "ai_study_buddy_enabled": ai_study_buddy_enabled == "true", "active": "settings"
     })
 
 @router.post("/settings", dependencies=[Depends(verify_admin)])
-async def admin_settings_post(request: Request, search_enabled: str = Form("off"), auto_delete_enabled: str = Form("off"), auto_delete_seconds: str = Form("3600"), protect_forwarding: str = Form("off"), post_file_message: str = Form(""), start_text: str = Form(""), about_text: str = Form(""), premium_text: str = Form(""), premium_enabled: str = Form("off"), free_search_limit: str = Form("5"), prem_search_limit: str = Form("100"), shortlink_enabled: str = Form("off"), shortlink_api_url: str = Form(""), shortlink_api_key: str = Form(""), referral_reward_type: str = Form("searches"), referral_reward_amount: str = Form("1")):
+async def admin_settings_post(request: Request, search_enabled: str = Form("off"), auto_delete_enabled: str = Form("off"), auto_delete_seconds: str = Form("3600"), protect_forwarding: str = Form("off"), post_file_message: str = Form(""), start_text: str = Form(""), about_text: str = Form(""), premium_text: str = Form(""), premium_enabled: str = Form("off"), free_search_limit: str = Form("5"), prem_search_limit: str = Form("100"), shortlink_enabled: str = Form("off"), shortlink_api_url: str = Form(""), shortlink_api_key: str = Form(""), referral_reward_type: str = Form("searches"), referral_reward_amount: str = Form("1"), ai_study_buddy_enabled: str = Form("off")):
     if "forcesub" not in request.state.perms:
         return RedirectResponse(url="/admin/?status=unauthorized", status_code=303)
     try:
@@ -184,6 +189,7 @@ async def admin_settings_post(request: Request, search_enabled: str = Form("off"
             await save_setting("shortlink_api_key", shortlink_api_key)
             await save_setting("referral_reward_type", referral_reward_type or "searches")
             await save_setting("referral_reward_amount", referral_reward_amount if referral_reward_amount and referral_reward_amount.isdigit() else "1")
+            await save_setting("ai_study_buddy_enabled", "true" if ai_study_buddy_enabled == "on" else "false")
         await log_admin_action(request, "Updated Bot Settings")
         return RedirectResponse(url="/admin/settings", status_code=303)
     except Exception as e:
@@ -244,19 +250,15 @@ async def admin_documents(request: Request, page: int = 1, q: Optional[str] = No
             else: 
                 stmt = select(Document)
                 count_stmt = select(func.count(Document.id))
-                
-            # Changed to order by Document.id.desc() for perfect chronological sorting
             result = await session.execute(stmt.order_by(Document.id.desc()).offset((page - 1) * per_page).limit(per_page))
             docs = result.scalars().all()
-            
             total = (await session.execute(count_stmt)).scalar() or 0
-            
         total_pages = max(1, (total + per_page - 1) // per_page)
         return templates.TemplateResponse(request, "documents.html", {"docs": docs, "page": page, "total_pages": total_pages, "q": q, "active": "documents"})
     except Exception:
         await repair_database()
         return templates.TemplateResponse(request, "documents.html", {"docs": [], "page": 1, "total_pages": 1, "q": q, "active": "documents"})
-        
+
 @router.get("/documents/edit/{doc_id}", dependencies=[Depends(verify_admin)], response_class=templates.TemplateResponse)
 async def admin_edit_doc(request: Request, doc_id: int):
     if "documents" not in request.state.perms:
@@ -377,8 +379,6 @@ async def admin_reset_search(request: Request, telegram_id: int):
     await log_admin_action(request, "Reset Search Count", str(telegram_id))
     return RedirectResponse(url=f"/admin/users/{telegram_id}", status_code=303)
 
-# ── Admin Management (Super Admin Only) ─────────
-
 @router.get("/admins", dependencies=[Depends(verify_admin)], response_class=templates.TemplateResponse)
 async def admin_list(request: Request):
     if "admins" not in request.state.perms:
@@ -448,8 +448,6 @@ async def admin_delete(request: Request, admin_id: int):
     await log_admin_action(request, "Deleted Admin", str(admin_id))
     return RedirectResponse(url="/admin/admins", status_code=303)
 
-# ── Activity Logs (Super Admin Only) ─────────
-
 @router.get("/logs", dependencies=[Depends(verify_admin)], response_class=templates.TemplateResponse)
 async def admin_logs(request: Request):
     if "admins" not in request.state.perms:
@@ -458,8 +456,6 @@ async def admin_logs(request: Request):
         res = await session.execute(select(AuditLog).order_by(AuditLog.created_at.desc()).limit(100))
         logs = res.scalars().all()
     return templates.TemplateResponse(request, "logs.html", {"logs": logs, "active": "logs"})
-
-# ── Automated Cleanup & Maintenance Tools ─────────
 
 @router.get("/deep_clean", dependencies=[Depends(verify_admin)])
 async def deep_clean(request: Request):
@@ -499,14 +495,40 @@ async def update_keyboards(request: Request):
     await log_admin_action(request, "Updated All Keyboards", f"Sent: {sent_count}")
     return f"✅ Success! Sent the new keyboard to {sent_count} users. ({failed_count} failed/blocked)."
 
-# ── Database Migration Tool ─────────────────────
+@router.get("/launch_social", dependencies=[Depends(verify_admin)])
+async def launch_social(request: Request):
+    if "admins" not in request.state.perms: return RedirectResponse(url="/admin/?status=unauthorized", status_code=303)
+    
+    async with get_session() as session:
+        result = await session.execute(select(User.telegram_id).where(User.is_banned == False))
+        user_ids = result.scalars().all()
+        
+    broadcast_text = (
+        "🚀 <b>PrepCore Social & AI Update is Here!</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "We’ve added amazing new features to make studying easier and more fun!\n\n"
+        "✨ <b>Aura Points</b>\nEarn Aura by uploading files, helping others, and inviting friends. Climb the /leaderboard!\n\n"
+        "🎯 <b>Bounty Board</b>\nCan't find a file? Use <code>/bounty [file name]</code>. If someone uploads it, they get +50 Aura!\n\n"
+        "👥 <b>Study Buddy & AI</b>\nUse <code>/studybuddy [subject]</code> to get matched with a student instantly and chat anonymously inside the bot! If no one is available, PrepCore AI will assist you.\n\n"
+        "Type /leaderboard to see who has the most Aura!"
+    )
+    
+    sent_count = 0
+    failed_count = 0
+    for uid in user_ids:
+        try:
+            await bot.send_message(uid, broadcast_text)
+            sent_count += 1
+            await asyncio.sleep(0.05)
+        except Exception:
+            failed_count += 1
+            
+    return f"✅ Success! Broadcast sent to {sent_count} users. ({failed_count} failed/blocked)."
 
 @router.get("/migrate", dependencies=[Depends(verify_admin)])
 async def migrate_data(request: Request):
-    if "admins" not in request.state.perms:
-        return RedirectResponse(url="/admin/?status=unauthorized", status_code=303)
+    if "admins" not in request.state.perms: return RedirectResponse(url="/admin/?status=unauthorized", status_code=303)
         
-    # Bulletproof URL cleaner: forcefully reconstructs the URL to start with postgresql://
     def clean_url(raw_url: str) -> str:
         if not raw_url: return ""
         if "://" in raw_url:
@@ -517,14 +539,9 @@ async def migrate_data(request: Request):
     old_url = clean_url(settings.DATABASE_URL)
     new_url = clean_url(os.environ.get("NEW_DATABASE_URL", ""))
     
-    if not new_url:
-        return "Error: NEW_DATABASE_URL is not set in Render environment."
-        
-    # Force SSL and disable thread safety checks that cause pooler crashes
-    if "sslmode" not in new_url:
-        new_url += "?sslmode=require"
-    if "statement_cache_size" not in new_url:
-        new_url += "&statement_cache_size=0"
+    if not new_url: return "Error: NEW_DATABASE_URL is not set."
+    if "sslmode" not in new_url: new_url += "?sslmode=require"
+    if "statement_cache_size" not in new_url: new_url += "&statement_cache_size=0"
 
     try:
         old_conn = await asyncpg.connect(old_url)
@@ -532,78 +549,37 @@ async def migrate_data(request: Request):
     except Exception as e:
         return f"❌ Database Connection Failed: {e}"
 
-    # 1. Create tables in new DB with ALL columns
     try:
-        await new_conn.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id SERIAL PRIMARY KEY, telegram_id BIGINT UNIQUE NOT NULL, username VARCHAR(255),
-                first_name VARCHAR(255), last_name VARCHAR(255), is_premium BOOLEAN DEFAULT false,
-                premium_expiry TIMESTAMP WITH TIME ZONE, is_banned BOOLEAN DEFAULT false,
-                search_count INTEGER DEFAULT 0, upload_count INTEGER DEFAULT 0, referral_count INTEGER DEFAULT 0,
-                last_reset_date DATE DEFAULT CURRENT_DATE, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-                updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-            );
-        """)
-        await new_conn.execute("""
-            CREATE TABLE IF NOT EXISTS documents (
-                id SERIAL PRIMARY KEY, file_id TEXT NOT NULL, message_id BIGINT, file_name TEXT NOT NULL,
-                subject VARCHAR(255), category VARCHAR(100), class_name VARCHAR(100), year INTEGER,
-                keywords TEXT[], description TEXT, uploaded_by BIGINT, approved BOOLEAN DEFAULT true,
-                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(), updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-            );
-        """)
-        await new_conn.execute("""
-            CREATE TABLE IF NOT EXISTS bot_settings (key VARCHAR(50) PRIMARY KEY, value TEXT);
-        """)
-        await new_conn.execute("""
-            CREATE TABLE IF NOT EXISTS admin_users (
-                id SERIAL PRIMARY KEY, telegram_id BIGINT UNIQUE NOT NULL, name VARCHAR(255),
-                password VARCHAR(255), permissions TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-            );
-        """)
-        await new_conn.execute("""
-            CREATE TABLE IF NOT EXISTS audit_logs (
-                id SERIAL PRIMARY KEY, admin_id VARCHAR(255), admin_name VARCHAR(255),
-                action VARCHAR(255), target VARCHAR(255), created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-            );
-        """)
+        await new_conn.execute("CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, telegram_id BIGINT UNIQUE NOT NULL, username VARCHAR(255), first_name VARCHAR(255), last_name VARCHAR(255), is_premium BOOLEAN DEFAULT false, premium_expiry TIMESTAMP WITH TIME ZONE, is_banned BOOLEAN DEFAULT false, search_count INTEGER DEFAULT 0, upload_count INTEGER DEFAULT 0, referral_count INTEGER DEFAULT 0, aura INTEGER DEFAULT 0, study_buddy_subject VARCHAR(255), chat_partner_id BIGINT, ai_name VARCHAR(255), ai_language VARCHAR(50), last_reset_date DATE DEFAULT CURRENT_DATE, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(), updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());")
+        await new_conn.execute("CREATE TABLE IF NOT EXISTS documents (id SERIAL PRIMARY KEY, file_id TEXT NOT NULL, message_id BIGINT, file_name TEXT NOT NULL, subject VARCHAR(255), category VARCHAR(100), class_name VARCHAR(100), year INTEGER, keywords TEXT[], description TEXT, uploaded_by BIGINT, approved BOOLEAN DEFAULT true, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(), updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());")
+        await new_conn.execute("CREATE TABLE IF NOT EXISTS bot_settings (key VARCHAR(50) PRIMARY KEY, value TEXT);")
+        await new_conn.execute("CREATE TABLE IF NOT EXISTS admin_users (id SERIAL PRIMARY KEY, telegram_id BIGINT UNIQUE NOT NULL, name VARCHAR(255), password VARCHAR(255), permissions TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());")
+        await new_conn.execute("CREATE TABLE IF NOT EXISTS audit_logs (id SERIAL PRIMARY KEY, admin_id VARCHAR(255), admin_name VARCHAR(255), action VARCHAR(255), target VARCHAR(255), created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());")
+        await new_conn.execute("CREATE TABLE IF NOT EXISTS bounties (id SERIAL PRIMARY KEY, requester_id BIGINT, query TEXT, fulfilled BOOLEAN DEFAULT false, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());")
     except Exception as e:
         return f"❌ Error creating tables: {e}"
 
-    # 2. Bulk Copy Users
     try:
         users = await old_conn.fetch("SELECT telegram_id, username, first_name, last_name, is_premium, premium_expiry, is_banned, search_count, upload_count, referral_count, last_reset_date FROM users")
         if users:
-            await new_conn.executemany(
-                "INSERT INTO users (telegram_id, username, first_name, last_name, is_premium, premium_expiry, is_banned, search_count, upload_count, referral_count, last_reset_date) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) ON CONFLICT DO NOTHING",
-                [(u['telegram_id'], u['username'], u['first_name'], u['last_name'], u['is_premium'], u['premium_expiry'], u['is_banned'], u['search_count'], u['upload_count'], u.get('referral_count', 0), u['last_reset_date']) for u in users]
-            )
+            await new_conn.executemany("INSERT INTO users (telegram_id, username, first_name, last_name, is_premium, premium_expiry, is_banned, search_count, upload_count, referral_count, last_reset_date) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) ON CONFLICT DO NOTHING", [(u['telegram_id'], u['username'], u['first_name'], u['last_name'], u['is_premium'], u['premium_expiry'], u['is_banned'], u['search_count'], u['upload_count'], u.get('referral_count', 0), u['last_reset_date']) for u in users])
     except Exception as e:
         logger.error(f"Migration error copying users: {e}")
 
-    # 3. Bulk Copy Documents
     try:
         docs = await old_conn.fetch("SELECT file_id, message_id, file_name, subject, category, class_name, year, keywords, description, uploaded_by, approved FROM documents")
         if docs:
-            await new_conn.executemany(
-                "INSERT INTO documents (file_id, message_id, file_name, subject, category, class_name, year, keywords, description, uploaded_by, approved) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) ON CONFLICT DO NOTHING",
-                [(d['file_id'], d['message_id'], d['file_name'], d['subject'], d['category'], d['class_name'], d['year'], d['keywords'], d['description'], d['uploaded_by'], d['approved']) for d in docs]
-            )
+            await new_conn.executemany("INSERT INTO documents (file_id, message_id, file_name, subject, category, class_name, year, keywords, description, uploaded_by, approved) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) ON CONFLICT DO NOTHING", [(d['file_id'], d['message_id'], d['file_name'], d['subject'], d['category'], d['class_name'], d['year'], d['keywords'], d['description'], d['uploaded_by'], d['approved']) for d in docs])
     except Exception as e:
         logger.error(f"Migration error copying documents: {e}")
 
-    # 4. Bulk Copy Settings
     try:
         settings_row = await old_conn.fetch("SELECT key, value FROM bot_settings")
         if settings_row:
-            await new_conn.executemany(
-                "INSERT INTO bot_settings (key, value) VALUES ($1, $2) ON CONFLICT DO NOTHING",
-                [(s['key'], s['value']) for s in settings_row]
-            )
+            await new_conn.executemany("INSERT INTO bot_settings (key, value) VALUES ($1, $2) ON CONFLICT DO NOTHING", [(s['key'], s['value']) for s in settings_row])
     except Exception as e:
         logger.error(f"Migration error copying settings: {e}")
 
     await old_conn.close()
     await new_conn.close()
-    
     return f"✅ Migration Complete! Copied {len(users)} users, {len(docs)} documents, and {len(settings_row)} settings."
