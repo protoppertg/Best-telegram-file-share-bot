@@ -36,6 +36,26 @@
     </div>
 </div>
 
+<!-- NEW SOCIAL STATS -->
+<div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+    <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+        <div class="flex items-center justify-between mb-4">
+            <span class="text-gray-500 text-sm font-medium">Active Bounties</span>
+            <i class="fas fa-bullseye text-red-500"></i>
+        </div>
+        <div class="text-3xl font-bold text-gray-900">{{ stats.active_bounties }}</div>
+        <p class="text-gray-400 text-sm mt-2">Files requested by users waiting to be fulfilled.</p>
+    </div>
+    <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+        <div class="flex items-center justify-between mb-4">
+            <span class="text-gray-500 text-sm font-medium">Active Study Buddies</span>
+            <i class="fas fa-people-arrows text-indigo-500"></i>
+        </div>
+        <div class="text-3xl font-bold text-gray-900">{{ stats.active_buddies }}</div>
+        <p class="text-gray-400 text-sm mt-2">Users currently in a chat or searching for a match.</p>
+    </div>
+</div>
+
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
     <!-- Referral Chart -->
     <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
@@ -48,7 +68,7 @@
         </div>
         {% endif %}
     </div>
-       <!-- Quick Actions -->
+    <!-- Quick Actions -->
     <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
         <h2 class="text-xl font-bold mb-4 text-gray-900">Quick Actions</h2>
         <div class="flex flex-col space-y-3">
@@ -56,7 +76,6 @@
             <a href="/admin/users" class="bg-gray-100 text-gray-700 px-4 py-3 rounded-xl hover:bg-gray-200 transition text-center">Manage Users</a>
             <a href="/admin/broadcast" class="bg-purple-500 text-white px-4 py-3 rounded-xl hover:bg-purple-600 transition shadow-sm text-center">Send Broadcast</a>
             <a href="/admin/settings" class="bg-gray-800 text-white px-4 py-3 rounded-xl hover:bg-gray-900 transition shadow-sm text-center">Bot Settings</a>
-            <a href="/admin/update_keyboards" class="bg-green-500 text-white px-4 py-3 rounded-xl hover:bg-green-600 transition shadow-sm text-center" onclick="return confirm('This will send a message to ALL users to update their keyboard. Are you sure?')">🔄 Update All User Menus</a>
         </div>
     </div>
 </div>
