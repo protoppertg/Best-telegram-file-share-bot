@@ -24,6 +24,9 @@ class User(Base):
     search_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     upload_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     referral_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    aura: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    study_buddy_subject: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    chat_partner_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     last_reset_date: Mapped[date] = mapped_column(Date, default=func.current_date(), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
@@ -74,15 +77,23 @@ class AdminUser(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     telegram_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False, index=True)
     name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    password: Mapped[Optional[str]] = mapped_column(String(255), nullable=True) # For Web Panel Login
-    permissions: Mapped[Optional[str]] = mapped_column(Text, nullable=True) # Comma-separated: "stats,users,documents"
+    password: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    permissions: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 class AuditLog(Base):
     __tablename__ = "audit_logs"
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    admin_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True) # "super" or telegram_id
+    admin_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     admin_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     action: Mapped[str] = mapped_column(String(255), nullable=False)
     target: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+class Bounty(Base):
+    __tablename__ = "bounties"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    requester_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    query: Mapped[str] = mapped_column(Text, nullable=False)
+    fulfilled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
