@@ -140,6 +140,11 @@ async def cmd_studybuddy(message: Message, command: CommandObject, db_user: User
             await message.answer("Error: User profile not found.")
             return
             
+        # Check if AI Study Buddy is enabled
+        ai_enabled_res = await session.execute(select(BotSetting).where(BotSetting.key == "ai_study_buddy_enabled"))
+        ai_enabled_setting = ai_enabled_res.scalar_one_or_none()
+        ai_enabled = not (ai_enabled_setting and ai_enabled_setting.value == "false")
+            
         # 1. Try to find a real user first
         match_res = await session.execute(
             select(User).where(User.study_buddy_subject == subject.capitalize(), User.telegram_id != db_user.telegram_id).limit(1)
@@ -159,19 +164,26 @@ async def cmd_studybuddy(message: Message, command: CommandObject, db_user: User
             await message.answer(f"👥 <b>Study Buddy Found!</b>\nYou are now connected with <b>@{escape(match.username or 'Buddy')}</b> for <b>{safe_subject}</b>.\n<blockquote>Say hi! Type /endchat to disconnect.</blockquote>")
             await message.bot.send_message(match.telegram_id, f"👥 <b>Study Buddy Found!</b>\nYou are now connected with <b>@{escape(message.from_user.username or 'Buddy')}</b> for <b>{safe_subject}</b>.\n<blockquote>Say hi! Type /endchat to disconnect.</blockquote>")
         else:
-            # 2. GHOST AI FALLBACK
-            ai_name = random.choice(GHOST_NAMES)
-            me.study_buddy_subject = subject.capitalize()
-            me.ai_name = ai_name
-            me.ai_language = "English" # Default to English, will update on first message
-            await session.flush()
-            
-            # Clear any old AI chat history
-            cache = await get_cache()
-            await cache.delete(f"ai_chat_history:{db_user.telegram_id}")
-            
-            # Introduce the AI with its fake name
-            await message.answer(f"👥 <b>Study Buddy Found!</b>\nYou are now connected with <b>{ai_name}</b> for <b>{safe_subject}</b>.\n<blockquote>Say hi! Type /endchat to disconnect.</blockquote>")
+            # No real user found
+            if ai_enabled:
+                # GHOST AI FALLBACK
+                ai_name = random.choice(GHOST_NAMES)
+                me.study_buddy_subject = subject.capitalize()
+                me.ai_name = ai_name
+                me.ai_language = "English"
+                await session.flush()
+                
+                # Clear any old AI chat history
+                cache = await get_cache()
+                await cache.delete(f"ai_chat_history:{db_user.telegram_id}")
+                
+                await message.answer(f"👥 <b>Study Buddy Found!</b>\nYou are now connected with <b>{ai_name}</b> for <b>{safe_subject}</b>.\n<blockquote>Say hi! Type /endchat to disconnect.</blockquote>")
+            else:
+                # AI is Disabled. Put user in waiting queue.
+                me.study_buddy_subject = subject.capitalize()
+                me.ai_name = None # Ensure AI is not triggered
+                await session.flush()
+                await message.answer(f"⏳ <b>Searching for a Study Buddy...</b>\nYou are now in the queue for <b>{safe_subject}</b>.\n<blockquote>We will notify you the moment someone else joins! Type /endchat to leave the queue.</blockquote>")
 
 @router.message(Command("endchat"))
 async def cmd_endchat(message: Message, db_user: User | None = None):
@@ -180,7 +192,7 @@ async def cmd_endchat(message: Message, db_user: User | None = None):
         return
         
     partner_id = db_user.chat_partner_id
-    is_ai = bool(db_user.study_buddy_subject)
+    is_ai = bool(db_user.study_buddy_subject and db_user.ai_name)
     
     async with get_session() as session:
         me = await session.execute(select(User).where(User.telegram_id == db_user.telegram_id))
@@ -402,7 +414,7 @@ async def handle_text(message: Message, db_user: User | None = None):
         
         # Keep only the last 4 messages (2 turns) to save API tokens
         chat_history = chat_history[-4:]
-        await cache.set(history_key, chat_history, ttl=3600) # Cache for 1 hour
+        await cache.set(history_key, chat_history, ttl=3600)
         
         await message.answer(ai_reply) # Send raw text, no "AI:" prefix
         return
