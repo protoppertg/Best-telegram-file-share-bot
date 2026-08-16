@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from functools import lru_cache
 from typing import List
-import os
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -19,6 +18,7 @@ class Settings(BaseSettings):
     WEBHOOK_SECRET: str = ""
     DATABASE_URL: str
     REDIS_URL: str = ""
+    ADMIN_IDS: str = ""
     CHANNEL_ID: str
 
     FREE_SEARCH_LIMIT: int = 5
@@ -36,6 +36,11 @@ class Settings(BaseSettings):
     WEB_ADMIN_SECRET_KEY: str = "change_this_to_a_random_string"
     WEB_ADMIN_PASSWORD: str = "admin"
 
+    # AI Configurations (Supports OpenAI, OpenRouter, Groq, etc.)
+    AI_API_KEY: str = ""
+    AI_BASE_URL: str = "https://api.openai.com/v1"
+    AI_MODEL: str = "gpt-4o-mini"
+
     @field_validator("DATABASE_URL", mode="before")
     def fix_database_url(cls, v: str) -> str:
         if isinstance(v, str) and v.startswith("postgresql://"):
@@ -44,14 +49,7 @@ class Settings(BaseSettings):
 
     @property
     def admin_ids_list(self) -> List[int]:
-        # Read directly from OS environment to bypass any caching
-        raw_env = os.environ.get("ADMIN_IDS", "")
-        ids = []
-        for x in raw_env.split(","):
-            x = x.strip().strip('"').strip("'")
-            if x.isdigit():
-                ids.append(int(x))
-        return ids
+        return [int(x.strip()) for x in self.ADMIN_IDS.split(",") if x.strip()]
 
     @property
     def max_file_size_bytes(self) -> int:
