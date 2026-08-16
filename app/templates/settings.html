@@ -6,7 +6,6 @@
 </div>
 
 <div class="space-y-6">
-    <!-- Bot Texts -->
     <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
         <h2 class="text-xl font-bold mb-4 text-gray-900">Bot Texts</h2>
         <form method="POST" action="/admin/settings" class="space-y-6">
@@ -72,6 +71,14 @@
                 </div>
             </div>
 
+            <div class="p-3 bg-gray-50 rounded-xl">
+                <label class="block text-gray-700 text-sm font-bold mb-1">AI Study Buddy</label>
+                <select name="ai_study_buddy_enabled" class="w-full bg-transparent border-none focus:outline-none text-sm">
+                    <option value="true" {% if ai_study_buddy_enabled %}selected{% endif %}>Enabled (Use AI if no human found)</option>
+                    <option value="false" {% if not ai_study_buddy_enabled %}selected{% endif %}>Disabled (Only match real humans)</option>
+                </select>
+            </div>
+
             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div class="p-3 bg-gray-50 rounded-xl">
                     <label class="block text-gray-700 text-sm font-bold mb-1">Referral Reward Type</label>
@@ -122,7 +129,6 @@
         </form>
     </div>
 
-    <!-- Force Sub -->
     <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
         <h2 class="text-xl font-bold mb-4 text-gray-900">Force Sub Channels</h2>
         {% if channels %}
