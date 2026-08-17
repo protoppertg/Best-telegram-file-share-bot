@@ -304,13 +304,27 @@ async def auto_index_channel_post(message: Message, bot: Bot):
     file_name = message.document.file_name or "Untitled.pdf"
     message_id = message.message_id
 
+    # Auto-Tag the file!
+    tags = user_service.auto_tag_file(file_name)
+
     async with get_session() as session:
         if await session.execute(select(Document).where(Document.file_id == file_id)): return
-        doc = await doc_service.create_document(session, file_id=file_id, message_id=message_id, file_name=file_name, subject="Uncategorized", category="Uncategorized", approved=True)
+        doc = await doc_service.create_document(
+            session, file_id=file_id, message_id=message_id, file_name=file_name,
+            subject=tags["subject"], category=tags["category"], class_name=tags["class_name"], year=tags["year"], approved=True
+        )
 
-    for admin_id in settings.admin_ids_list:
-        try: await bot.send_message(admin_id, f"📥 <b>Auto-Indexed File</b>\n\n📁 Name: <code>{escape(file_name)}</code>\n🆔 ID: {doc.id}\n\nUse <code>/edit_doc {doc.id} subject=Physics category=PYQ year=2023</code> to update metadata.")
-        except: pass
+        # Check if this fulfills a bounty!
+        matched_bounty = await user_service.check_bounty_match(session, doc.file_name, 0)
+        if matched_bounty:
+            matched_bounty.fulfilled = True
+            await user_service.add_aura(matched_bounty.requester_id, 10) # Give requester some karma for having their bounty fulfilled
+            await session.flush()
+            
+            try:
+                await bot.send_message(matched_bounty.requester_id, f"🎯 <b>Bounty Fulfilled!</b>\nAn admin uploaded a file matching your request: <i>{escape(matched_bounty.query)}</i>\n\nFile: <code>{escape(doc.file_name)}</code>")
+            except Exception:
+                pass
 
 @router.message(Command("edit_doc"))
 async def cmd_edit_doc(message: Message, command: CommandObject):
