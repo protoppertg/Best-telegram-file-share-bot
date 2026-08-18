@@ -45,6 +45,7 @@ async def on_startup() -> None:
     commands = [
         BotCommand(command="/start", description="🚀 Start the bot"),
         BotCommand(command="/usage", description="📊 Check your usage limits"),
+        BotCommand(command="/aura", description="✨ View Aura Store & Balance"),
         BotCommand(command="/about", description="ℹ️ About PrepCore"),
         BotCommand(command="/premium", description="🎟️ View Premium status"),
         BotCommand(command="/cancel", description="❌ Cancel current action"),
