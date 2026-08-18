@@ -48,7 +48,6 @@ async def _is_premium_enabled() -> bool:
         return not (prem_enabled and prem_enabled.value == "false")
 
 def detect_language(text: str) -> str:
-    """Detects if the text is Hinglish or English."""
     if re.search(r'[\u0900-\u097F]', text):
         return "Hindi"
     hinglish_words = ['hai', 'kya', 'kaise', 'mera', 'tera', 'aaj', 'kal', 'padhai', 'exam', 'bhai', 'yaar', 'nahi', 'haan']
@@ -103,11 +102,30 @@ async def cmd_bounty(message: Message, command: CommandObject, db_user: User | N
     if not db_user:
         await message.answer("Please send /start first to register.")
         return
+        
     query = command.args
+    
+    # If no args, show the dashboard + instructions
     if not query or len(query) < 3:
-        await message.answer("Usage: <code>/bounty Need HC Verma Physics PDF</code>")
+        async with get_session() as session:
+            res = await session.execute(select(Bounty).where(Bounty.fulfilled == False).order_by(Bounty.created_at.desc()).limit(10))
+            active_bounties = res.scalars().all()
+            
+        text = "🎯 <b>Bounty Board</b>\n━━━━━━━━━━━━━━━━━━━━\n"
+        text += "<i>Can't find a file? Request it here! If someone uploads it, they earn +50 Aura.</i>\n\n"
+        text += "<b>How to use:</b>\n<code>/bounty [file name]</code>\n<i>Example:</i> <code>/bounty HC Verma Physics PDF</code>\n\n"
+        
+        if active_bounties:
+            text += "<b>Active Requests:</b>\n"
+            for b in active_bounties:
+                text += f"• {escape(b.query)}\n"
+        else:
+            text += "<b>Active Requests:</b>\nNo active bounties right now. Be the first to request one!"
+            
+        await message.answer(text)
         return
         
+    # If args provided, post the bounty
     async with get_session() as session:
         bounty = Bounty(requester_id=db_user.telegram_id, query=query)
         session.add(bounty)
@@ -116,7 +134,7 @@ async def cmd_bounty(message: Message, command: CommandObject, db_user: User | N
         "🎯 <b>Bounty Posted!</b>\n"
         f"<blockquote>{escape(query)}</blockquote>\n"
         "If someone uploads a file matching this request, they will instantly earn <b>50 Aura</b>!\n\n"
-        "Use /leaderboard to see top contributors."
+        "Type /bounty to see what others are looking for."
     )
 
 @router.message(Command("studybuddy"))
@@ -140,19 +158,16 @@ async def cmd_studybuddy(message: Message, command: CommandObject, db_user: User
             await message.answer("Error: User profile not found.")
             return
             
-        # Check if AI Study Buddy is enabled
         ai_enabled_res = await session.execute(select(BotSetting).where(BotSetting.key == "ai_study_buddy_enabled"))
         ai_enabled_setting = ai_enabled_res.scalar_one_or_none()
         ai_enabled = not (ai_enabled_setting and ai_enabled_setting.value == "false")
             
-        # 1. Try to find a real user first
         match_res = await session.execute(
             select(User).where(User.study_buddy_subject == subject.capitalize(), User.telegram_id != db_user.telegram_id).limit(1)
         )
         match = match_res.scalar_one_or_none()
         
         if match:
-            # Connect them in-bot
             match.study_buddy_subject = None
             match.chat_partner_id = db_user.telegram_id
             
@@ -160,28 +175,23 @@ async def cmd_studybuddy(message: Message, command: CommandObject, db_user: User
             me.chat_partner_id = match.telegram_id
             await session.flush()
             
-            # Use real usernames for introduction
             await message.answer(f"👥 <b>Study Buddy Found!</b>\nYou are now connected with <b>@{escape(match.username or 'Buddy')}</b> for <b>{safe_subject}</b>.\n<blockquote>Say hi! Type /endchat to disconnect.</blockquote>")
             await message.bot.send_message(match.telegram_id, f"👥 <b>Study Buddy Found!</b>\nYou are now connected with <b>@{escape(message.from_user.username or 'Buddy')}</b> for <b>{safe_subject}</b>.\n<blockquote>Say hi! Type /endchat to disconnect.</blockquote>")
         else:
-            # No real user found
             if ai_enabled:
-                # GHOST AI FALLBACK
                 ai_name = random.choice(GHOST_NAMES)
                 me.study_buddy_subject = subject.capitalize()
                 me.ai_name = ai_name
                 me.ai_language = "English"
                 await session.flush()
                 
-                # Clear any old AI chat history
                 cache = await get_cache()
                 await cache.delete(f"ai_chat_history:{db_user.telegram_id}")
                 
                 await message.answer(f"👥 <b>Study Buddy Found!</b>\nYou are now connected with <b>{ai_name}</b> for <b>{safe_subject}</b>.\n<blockquote>Say hi! Type /endchat to disconnect.</blockquote>")
             else:
-                # AI is Disabled. Put user in waiting queue.
                 me.study_buddy_subject = subject.capitalize()
-                me.ai_name = None # Ensure AI is not triggered
+                me.ai_name = None
                 await session.flush()
                 await message.answer(f"⏳ <b>Searching for a Study Buddy...</b>\nYou are now in the queue for <b>{safe_subject}</b>.\n<blockquote>We will notify you the moment someone else joins! Type /endchat to leave the queue.</blockquote>")
 
@@ -209,7 +219,6 @@ async def cmd_endchat(message: Message, db_user: User | None = None):
             if partner: partner.chat_partner_id = None
         await session.flush()
         
-    # Clear AI chat history from cache
     cache = await get_cache()
     await cache.delete(f"ai_chat_history:{db_user.telegram_id}")
         
@@ -283,7 +292,7 @@ async def cmd_help(message: Message):
         "<i>Example:</i> <code>physics thermodynamics</code></blockquote>\n"
         "<blockquote><b>2. Advanced Filters</b>\nNarrow down results instantly.\n"
         "<i>Example:</i> <code>math subject:Algebra year:2023</code></blockquote>\n"
-        "<blockquote><b>3. Bounty (</b><code>/bounty</code><b>)</b>\nRequest a file you can't find. If someone uploads it, they get 50 Aura!</blockquote>\n"
+        "<blockquote><b>3. Bounty (</b><code>/bounty</code><b>)</b>\nRequest a file you can't find. Type /bounty to see what others need. If you upload it, you get +50 Aura!</blockquote>\n"
         "<blockquote><b>4. Study Buddy (</b><code>/studybuddy</code><b>)</b>\nFind a study partner instantly. If no one is available, PrepCore AI will help you!</blockquote>"
     )
     await message.answer(text)
@@ -364,14 +373,11 @@ async def cmd_search(message: Message, command: CommandObject, db_user: User | N
         return
     await _perform_search(message, query, db_user, page=1)
 
-# Intercept messages for Chat Relay or Ghost AI
 @router.message(StateFilter(None), F.text & ~F.text.startswith("/"))
 async def handle_text(message: Message, db_user: User | None = None):
     query = message.text.strip()
     
-    # 1. Check if in a real Study Buddy Chat Relay
     if db_user and db_user.chat_partner_id:
-        # CHAT MODERATION: Block links, usernames, and phone numbers
         if re.search(r'http[s]?://|t\.me/|@|(\+?\d{10,})', query, re.I):
             await message.answer("🚫 <b>Warning!</b>\nSharing external links, usernames, or phone numbers is not allowed in Study Buddy chat to prevent spam.")
             return
@@ -383,11 +389,9 @@ async def handle_text(message: Message, db_user: User | None = None):
             await message.answer("❌ Failed to send message. Your buddy may have left.")
         return
         
-    # 2. Check if in Ghost AI Mode
     if db_user and db_user.study_buddy_subject and db_user.ai_name:
         await message.bot.send_chat_action(message.chat.id, "typing")
         
-        # Detect language and save it so the AI remembers
         detected_lang = detect_language(query)
         if not db_user.ai_language or db_user.ai_language == "English":
             if detected_lang != "English":
@@ -399,27 +403,21 @@ async def handle_text(message: Message, db_user: User | None = None):
                         await session.flush()
                 db_user.ai_language = detected_lang
                 
-        # Fetch chat history from cache (Sliding Window Memory)
         cache = await get_cache()
         history_key = f"ai_chat_history:{db_user.telegram_id}"
         chat_history = await cache.get(history_key) or []
         
         from app.services.ai import get_ghost_ai_response
-        # Pass the history to the AI!
         ai_reply = await get_ghost_ai_response(db_user.ai_name, db_user.study_buddy_subject, db_user.ai_language or "English", query, chat_history)
         
-        # Update history with the new user message and AI reply
         chat_history.append({"role": "user", "content": query})
         chat_history.append({"role": "assistant", "content": ai_reply})
-        
-        # Keep only the last 4 messages (2 turns) to save API tokens
         chat_history = chat_history[-4:]
         await cache.set(history_key, chat_history, ttl=3600)
         
-        await message.answer(ai_reply) # Send raw text, no "AI:" prefix
+        await message.answer(ai_reply)
         return
 
-    # 3. Normal Search
     if query in ["🔍 Search", "📤 Upload", "🎟️ Premium", "🤝 Referral", "❓ Help"]:
         return
     if not is_valid_search_query(query):
@@ -674,12 +672,14 @@ async def upload_keywords(message: Message, state: FSMContext, bot: Bot, db_user
             except Exception:
                 pass
 
-        if db_user: await user_service.increment_upload_count(db_user.telegram_id)
+        if db_user: 
+            await user_service.increment_upload_count(db_user.telegram_id)
+            await user_service.add_aura(db_user.telegram_id, 10)
 
     if approved:
-        reward_text = f"✅ <b>Upload Successful!</b>\n\n📁 {escape(sanitise_text(doc.file_name, 100))}\n\nThank you for supporting the library! 🙏"
+        reward_text = f"✅ <b>Upload Successful!</b>\n\n📁 {escape(sanitise_text(doc.file_name, 100))}\n\nThank you for supporting the library! 🙏\n✨ You earned <b>+10 Aura</b>!"
         if matched_bounty:
-            reward_text += "\n\n🎉 <b>BONUS:</b> You fulfilled a bounty and earned <b>50 Aura</b>!"
+            reward_text += "\n\n🎉 <b>BONUS:</b> You fulfilled a bounty and earned <b>+50 Aura</b>!"
         await status_msg.edit_text(reward_text)
     else:
         await status_msg.edit_text(f"⏳ <b>Upload Received — Pending Approval</b>\n\n📁 {escape(sanitise_text(doc.file_name, 100))}\n\nYour file is awaiting admin approval.")
