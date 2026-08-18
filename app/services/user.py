@@ -107,6 +107,32 @@ async def add_aura(telegram_id: int, amount: int = 1):
     except Exception as e:
         logger.error("add_aura_error", error=str(e))
 
+async def deduct_aura(telegram_id: int, amount: int) -> bool:
+    """Charges the user's Aura balance. Returns True if successful, False if insufficient balance."""
+    try:
+        async with get_session() as session:
+            result = await session.execute(select(User).where(User.telegram_id == telegram_id))
+            user = result.scalar_one_or_none()
+            if not user or user.aura < amount:
+                return False
+            user.aura -= amount
+            await session.flush()
+            return True
+    except Exception as e:
+        logger.error("deduct_aura_error", error=str(e))
+        return False
+
+async def grant_bonus_searches(telegram_id: int, amount: int):
+    """Gives the user instant extra searches for today by reducing their used search count."""
+    try:
+        async with get_session() as session:
+            await session.execute(
+                text("UPDATE users SET search_count = GREATEST(0, search_count - :amt) WHERE telegram_id = :tid"),
+                {"tid": telegram_id, "amt": amount}
+            )
+    except Exception as e:
+        logger.error("grant_bonus_searches_error", error=str(e))
+
 async def add_referral(telegram_id: int):
     async with get_session() as session:
         res = await session.execute(select(BotSetting).where(BotSetting.key.in_(["referral_reward_type", "referral_reward_amount"])))
@@ -119,7 +145,7 @@ async def add_referral(telegram_id: int):
         user = result.scalar_one_or_none()
         if user:
             user.referral_count += 1
-            user.aura += 10
+            user.aura += 10 # Award 10 Aura for a referral!
             
             if r_type == "premium":
                 now = datetime.now(timezone.utc)
@@ -230,7 +256,6 @@ async def get_stats(session: AsyncSession) -> dict:
     searches_today = (await session.execute(select(func.count(SearchLog.id)).where(func.date(SearchLog.created_at) == today))).scalar() or 0
     uploads_today = (await session.execute(select(func.count(Document.id)).where(func.date(Document.created_at) == today))).scalar() or 0
     
-    # Social Stats for Admin Panel
     active_bounties = (await session.execute(select(func.count(Bounty.id)).where(Bounty.fulfilled == False))).scalar() or 0
     active_buddies = (await session.execute(select(func.count(User.id)).where((User.chat_partner_id != None) | (User.study_buddy_subject != None)))).scalar() or 0
     
