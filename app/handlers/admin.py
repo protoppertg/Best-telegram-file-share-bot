@@ -325,6 +325,7 @@ async def auto_index_channel_post(message: Message, bot: Bot):
                 subject=tags["subject"], category=tags["category"], class_name=tags["class_name"], year=tags["year"], approved=True
             )
 
+            # Check if this fulfills a bounty!
             matched_bounty = await user_service.check_bounty_match(session, doc.file_name, 0)
             if matched_bounty:
                 matched_bounty.fulfilled = True
@@ -332,7 +333,16 @@ async def auto_index_channel_post(message: Message, bot: Bot):
                 await session.flush()
                 
                 try:
-                    await bot.send_message(matched_bounty.requester_id, f"🎯 <b>Bounty Fulfilled!</b>\nAn admin uploaded a file matching your request: <i>{escape(matched_bounty.query)}</i>\n\nFile: <code>{escape(doc.file_name)}</code>")
+                    # Send notification to requester with a private download button
+                    from aiogram.utils.keyboard import InlineKeyboardBuilder
+                    kb = InlineKeyboardBuilder()
+                    kb.button(text="📥 Download File", callback_data=f"btydl:{doc.id}")
+                    
+                    await bot.send_message(
+                        matched_bounty.requester_id, 
+                        f"🎯 <b>Bounty Fulfilled!</b>\nAn admin uploaded a file matching your request: <i>{escape(matched_bounty.query)}</i>\n\nFile: <code>{escape(doc.file_name)}</code>\n\nTap the button below to download it. The link will expire after you download!",
+                        reply_markup=kb.as_markup()
+                    )
                 except Exception:
                     pass
 
