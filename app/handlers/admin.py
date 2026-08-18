@@ -23,7 +23,15 @@ from app.utils.validators import sanitise_text, parse_keywords, parse_year
 
 router = Router()
 
-# NO MORE SILENT FILTERS. We check inside the command.
+class AdminFilter(BaseFilter):
+    async def __call__(self, message: Message) -> bool:
+        # Allow channel posts to bypass the admin check completely
+        if message.chat.type == "channel":
+            return True
+        return message.from_user and message.from_user.id in settings.admin_ids_list
+
+router.message.filter(AdminFilter())
+router.callback_query.filter(F.data.startswith("adm:"))
 
 class ForceSubStates(StatesGroup):
     waiting_channel_id = State()
@@ -36,13 +44,11 @@ class DirectMessageStates(StatesGroup):
     waiting_message = State()
 
 async def has_permission(user_id: int, permission: str) -> bool:
-    # 1. Check Super Admin from env var
     raw_env = os.environ.get("ADMIN_IDS", "")
     admin_ids = [int(x.strip()) for x in raw_env.split(",") if x.strip().isdigit()]
     if user_id in admin_ids:
         return True
         
-    # 2. Check Sub-Admins in database
     async with get_session() as session:
         res = await session.execute(select(AdminUser).where(AdminUser.telegram_id == user_id))
         admin = res.scalar_one_or_none()
@@ -142,17 +148,15 @@ def admin_doc_actions_kb(doc_id: int, approved: bool):
     kb.adjust(1)
     return kb.as_markup()
 
-
 @router.message(Command("admin"))
 async def cmd_admin(message: Message, state: FSMContext):
     await state.clear()
     
-    # Get permissions for this user
     raw_env = os.environ.get("ADMIN_IDS", "")
     super_admins = [int(x.strip()) for x in raw_env.split(",") if x.strip().isdigit()]
     
     if message.from_user.id in super_admins:
-        perms = ["stats", "users", "documents", "broadcast", "forcesub"] # Super admin gets all
+        perms = ["stats", "users", "documents", "broadcast", "forcesub"]
     else:
         async with get_session() as session:
             res = await session.execute(select(AdminUser).where(AdminUser.telegram_id == message.from_user.id))
@@ -293,38 +297,49 @@ async def fs_clear(message: Message, state: FSMContext):
         await save_force_sub_channels(session, [])
     await message.answer("🗑 All Force Sub channels cleared.", reply_markup=admin_menu_kb(["forcesub"]))
 
+# ── Auto-Index Channel Posts (Fixed & Bulletproof) ─────────────
+
 @router.channel_post(F.document)
 async def auto_index_channel_post(message: Message, bot: Bot):
-    try: target_channel = int(settings.CHANNEL_ID)
-    except: return
-    if message.chat.id != target_channel: return
-    if message.caption and message.caption.startswith("📤 Uploaded by:"): return
-
-    file_id = message.document.file_id
-    file_name = message.document.file_name or "Untitled.pdf"
-    message_id = message.message_id
-
-    # Auto-Tag the file!
-    tags = user_service.auto_tag_file(file_name)
-
-    async with get_session() as session:
-        if await session.execute(select(Document).where(Document.file_id == file_id)): return
-        doc = await doc_service.create_document(
-            session, file_id=file_id, message_id=message_id, file_name=file_name,
-            subject=tags["subject"], category=tags["category"], class_name=tags["class_name"], year=tags["year"], approved=True
-        )
-
-        # Check if this fulfills a bounty!
-        matched_bounty = await user_service.check_bounty_match(session, doc.file_name, 0)
-        if matched_bounty:
-            matched_bounty.fulfilled = True
-            await user_service.add_aura(matched_bounty.requester_id, 10) # Give requester some karma for having their bounty fulfilled
-            await session.flush()
+    try:
+        target_channel = int(settings.CHANNEL_ID)
+        if message.chat.id != target_channel:
+            return
             
-            try:
-                await bot.send_message(matched_bounty.requester_id, f"🎯 <b>Bounty Fulfilled!</b>\nAn admin uploaded a file matching your request: <i>{escape(matched_bounty.query)}</i>\n\nFile: <code>{escape(doc.file_name)}</code>")
-            except Exception:
-                pass
+        if message.caption and message.caption.startswith("📤 Uploaded by:"):
+            return
+
+        file_id = message.document.file_id
+        file_name = message.document.file_name or "Untitled.pdf"
+        message_id = message.message_id
+
+        tags = user_service.auto_tag_file(file_name)
+
+        async with get_session() as session:
+            # Check if already exists
+            existing = await session.execute(select(Document).where(Document.file_id == file_id))
+            if existing.scalar_one_or_none():
+                return
+
+            doc = await doc_service.create_document(
+                session, file_id=file_id, message_id=message_id, file_name=file_name,
+                subject=tags["subject"], category=tags["category"], class_name=tags["class_name"], year=tags["year"], approved=True
+            )
+
+            # Check if this fulfills a bounty!
+            matched_bounty = await user_service.check_bounty_match(session, doc.file_name, 0)
+            if matched_bounty:
+                matched_bounty.fulfilled = True
+                await user_service.add_aura(matched_bounty.requester_id, 10)
+                await session.flush()
+                
+                try:
+                    await bot.send_message(matched_bounty.requester_id, f"🎯 <b>Bounty Fulfilled!</b>\nAn admin uploaded a file matching your request: <i>{escape(matched_bounty.query)}</i>\n\nFile: <code>{escape(doc.file_name)}</code>")
+                except Exception:
+                    pass
+
+    except Exception as e:
+        logger.error("auto_index_error", error=str(e), exc_info=True)
 
 @router.message(Command("edit_doc"))
 async def cmd_edit_doc(message: Message, command: CommandObject):
@@ -379,7 +394,7 @@ async def cb_admin_user_actions(callback: CallbackQuery, state: FSMContext):
         if not user: return
         prem_status = "⭐ ACTIVE" if user.is_premium else "❌ INACTIVE"
         ban_status = "🚫 BANNED" if user.is_banned else "✅ ACTIVE"
-        text = (f"👤 <b>User Profile</b>\n\n🆔 ID: <code>{user.telegram_id}</code>\n👤 Name: {escape(user.first_name or 'N/A')}\n📊 Search Count: {user.search_count}\n🎟️ Premium: {prem_status}\n🚫 Status: {ban_status}")
+        text = (f"👤 <b>User Profile</b>\n\n🆔 ID: <code>{user.telegram_id}</code>\n👤 Name: {escape(user.first_name or 'N/A')}\n📊 Search Count: {user.search_count}\n🎟️ Premium: {prem_status}\n🚫 Status: {ban_status}\n✨ Aura: <b>{user.aura}</b>")
         await callback.message.edit_text(text, reply_markup=admin_user_actions_kb(telegram_id, user.is_premium, user.is_banned))
         await callback.answer()
     elif len(parts) == 4:
@@ -419,13 +434,12 @@ async def cb_admin_docs(callback: CallbackQuery):
     per_page = 5
     async with get_session() as session:
         total = (await session.execute(select(func.count(Document.id)))).scalar() or 0
-        # Changed to order by Document.id.desc() for perfect chronological sorting
         result = await session.execute(select(Document).order_by(Document.id.desc()).offset((page - 1) * per_page).limit(per_page))
         docs = result.scalars().all()
     total_pages = max(1, (total + per_page - 1) // per_page)
     await callback.message.edit_text(f"📄 <b>Documents Management</b> ({total} total)", reply_markup=admin_docs_kb(docs, page, total_pages, "adm:docs"))
     await callback.answer()
-    
+
 @router.callback_query(F.data.startswith("adm:pend:"))
 async def cb_admin_pending(callback: CallbackQuery):
     if not await has_permission(callback.from_user.id, "documents"): return
