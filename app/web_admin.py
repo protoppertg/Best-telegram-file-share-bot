@@ -583,3 +583,31 @@ async def migrate_data(request: Request):
     await old_conn.close()
     await new_conn.close()
     return f"✅ Migration Complete! Copied {len(users)} users, {len(docs)} documents, and {len(settings_row)} settings."
+# ── Renumber Documents ─────────────────────────
+
+@router.get("/renumber_docs", dependencies=[Depends(verify_admin)])
+async def renumber_docs(request: Request):
+    """Completely renumbers all documents 1, 2, 3... and fixes the counter."""
+    if "admins" not in request.state.perms: 
+        return RedirectResponse(url="/admin/?status=unauthorized", status_code=303)
+    try:
+        async with get_session() as session:
+            # 1. Renumber all existing rows sequentially based on their upload date
+            await session.execute(text("""
+                WITH renumbered AS (
+                    SELECT id as old_id, ROW_NUMBER() OVER (ORDER BY created_at, id) as new_id
+                    FROM documents
+                )
+                UPDATE documents d
+                SET id = r.new_id
+                FROM renumbered r
+                WHERE d.id = r.old_id
+            """))
+            
+            # 2. Reset the auto-increment counter to match the new highest ID
+            await session.execute(text("SELECT setval('documents_id_seq', (SELECT COALESCE(MAX(id), 1) FROM documents));"))
+            
+        return "✅ Success! All documents have been renumbered sequentially (1, 2, 3...). The ID counter is now perfectly fixed."
+    except Exception as e:
+        logger.error("renumber_docs_error", error=str(e), exc_info=True)
+        return f"❌ Error renumbering documents: {str(e)}"
