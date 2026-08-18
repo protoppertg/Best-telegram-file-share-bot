@@ -731,7 +731,16 @@ async def upload_keywords(message: Message, state: FSMContext, bot: Bot, db_user
             await session.flush()
             
             try:
-                await bot.send_message(matched_bounty.requester_id, f"🎯 <b>Bounty Fulfilled!</b>\nSomeone uploaded a file matching your request: <i>{escape(matched_bounty.query)}</i>\n\nFile: <code>{escape(doc.file_name)}</code>")
+                # Send notification to requester with a private download button
+                from aiogram.utils.keyboard import InlineKeyboardBuilder
+                kb = InlineKeyboardBuilder()
+                kb.button(text="📥 Download File", callback_data=f"btydl:{doc.id}")
+                
+                await bot.send_message(
+                    matched_bounty.requester_id, 
+                    f"🎯 <b>Bounty Fulfilled!</b>\nSomeone uploaded a file matching your request: <i>{escape(matched_bounty.query)}</i>\n\nFile: <code>{escape(doc.file_name)}</code>\n\nTap the button below to download it. The link will expire after you download!",
+                    reply_markup=kb.as_markup()
+                )
             except Exception:
                 pass
 
