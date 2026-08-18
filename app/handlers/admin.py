@@ -7,7 +7,7 @@ import json
 import os
 from html import escape
 from aiogram import Bot, F, Router
-from aiogram.filters import Command, CommandObject
+from aiogram.filters import BaseFilter, Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
@@ -316,7 +316,6 @@ async def auto_index_channel_post(message: Message, bot: Bot):
         tags = user_service.auto_tag_file(file_name)
 
         async with get_session() as session:
-            # Check if already exists
             existing = await session.execute(select(Document).where(Document.file_id == file_id))
             if existing.scalar_one_or_none():
                 return
@@ -326,7 +325,6 @@ async def auto_index_channel_post(message: Message, bot: Bot):
                 subject=tags["subject"], category=tags["category"], class_name=tags["class_name"], year=tags["year"], approved=True
             )
 
-            # Check if this fulfills a bounty!
             matched_bounty = await user_service.check_bounty_match(session, doc.file_name, 0)
             if matched_bounty:
                 matched_bounty.fulfilled = True
