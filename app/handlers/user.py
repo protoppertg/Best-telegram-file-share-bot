@@ -97,6 +97,70 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
     show_prem = await _is_premium_enabled()
     await message.answer(text, reply_markup=main_menu_kb(show_premium=show_prem))
 
+@router.message(Command("aura"))
+async def cmd_aura(message: Message, db_user: User | None = None):
+    """Aura Wallet & Store Dashboard"""
+    if not db_user:
+        await message.answer("Please send /start first to register.")
+        return
+        
+    text = (
+        "<b>✨ Aura Dashboard</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"Your Balance: <b>{db_user.aura} Aura</b>\n\n"
+        "<b>📈 How to Earn Aura:</b>\n"
+        "• Upload a file: <b>+10 Aura</b>\n"
+        "• Fulfill a Bounty: <b>+50 Aura</b>\n"
+        "• Invite a Friend: <b>+10 Aura</b>\n"
+        "• Receive Kudos (Thanks): <b>+1 Aura</b>\n\n"
+        "<b>🛒 Aura Store</b>\n"
+        "Spend your Aura points below!"
+    )
+    
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🔍 Buy +5 Searches Today (20 Aura)", callback_data="buy:searches")
+    kb.button(text="⭐ Buy 1 Day Premium (100 Aura)", callback_data="buy:premium")
+    kb.adjust(1)
+    
+    await message.answer(text, reply_markup=kb.as_markup())
+
+@router.callback_query(F.data.startswith("buy:"))
+async def process_purchase(callback: CallbackQuery, db_user: User | None = None):
+    """Handles Aura Store purchases."""
+    if not db_user:
+        await callback.answer("User not found. Please send /start first.", show_alert=True)
+        return
+        
+    item = callback.data.split(":")[1]
+    
+    if item == "searches":
+        cost = 20
+        if db_user.aura < cost:
+            await callback.answer(f"Insufficient Aura! You need {cost} but have {db_user.aura}.", show_alert=True)
+            return
+            
+        success = await user_service.deduct_aura(db_user.telegram_id, cost)
+        if success:
+            await user_service.grant_bonus_searches(db_user.telegram_id, 5)
+            await callback.answer("✅ Purchased +5 Searches for today!", show_alert=True)
+            await callback.message.edit_text(f"✅ <b>Purchase Successful!</b>\n\nYou spent {cost} Aura and gained +5 searches for today.\nRemaining Aura: <b>{db_user.aura - cost}</b>")
+        else:
+            await callback.answer("Transaction failed.", show_alert=True)
+            
+    elif item == "premium":
+        cost = 100
+        if db_user.aura < cost:
+            await callback.answer(f"Insufficient Aura! You need {cost} but have {db_user.aura}.", show_alert=True)
+            return
+            
+        success = await user_service.deduct_aura(db_user.telegram_id, cost)
+        if success:
+            await user_service.activate_premium(db_user.telegram_id, 1)
+            await callback.answer("✅ Purchased 1 Day Premium!", show_alert=True)
+            await callback.message.edit_text(f"✅ <b>Purchase Successful!</b>\n\nYou spent {cost} Aura and gained 1 Day of Premium!\nRemaining Aura: <b>{db_user.aura - cost}</b>")
+        else:
+            await callback.answer("Transaction failed.", show_alert=True)
+
 @router.message(Command("bounty"))
 async def cmd_bounty(message: Message, command: CommandObject, db_user: User | None = None):
     if not db_user:
@@ -105,7 +169,6 @@ async def cmd_bounty(message: Message, command: CommandObject, db_user: User | N
         
     query = command.args
     
-    # If no args, show the dashboard + instructions
     if not query or len(query) < 3:
         async with get_session() as session:
             res = await session.execute(select(Bounty).where(Bounty.fulfilled == False).order_by(Bounty.created_at.desc()).limit(10))
@@ -125,7 +188,6 @@ async def cmd_bounty(message: Message, command: CommandObject, db_user: User | N
         await message.answer(text)
         return
         
-    # If args provided, post the bounty
     async with get_session() as session:
         bounty = Bounty(requester_id=db_user.telegram_id, query=query)
         session.add(bounty)
@@ -293,7 +355,8 @@ async def cmd_help(message: Message):
         "<blockquote><b>2. Advanced Filters</b>\nNarrow down results instantly.\n"
         "<i>Example:</i> <code>math subject:Algebra year:2023</code></blockquote>\n"
         "<blockquote><b>3. Bounty (</b><code>/bounty</code><b>)</b>\nRequest a file you can't find. Type /bounty to see what others need. If you upload it, you get +50 Aura!</blockquote>\n"
-        "<blockquote><b>4. Study Buddy (</b><code>/studybuddy</code><b>)</b>\nFind a study partner instantly. If no one is available, PrepCore AI will help you!</blockquote>"
+        "<blockquote><b>4. Study Buddy (</b><code>/studybuddy</code><b>)</b>\nFind a study partner instantly. If no one is available, PrepCore AI will help you!</blockquote>\n"
+        "<blockquote><b>5. Aura Store (</b><code>/aura</code><b>)</b>\nEarn Aura by helping others, and spend it in the store for extra searches and Premium!</blockquote>"
     )
     await message.answer(text)
 
@@ -324,7 +387,7 @@ async def cmd_usage(message: Message, db_user: User | None = None):
         "━━━━━━━━━━━━━━━━━━━━\n"
         f"<blockquote>🔍 Searches: <b>{db_user.search_count} / {search_limit}</b>\n"
         f"📤 Uploads: <b>{db_user.upload_count} / {upload_limit}</b></blockquote>\n"
-        f"✨ Aura: <b>{db_user.aura}</b>\n"
+        f"✨ Aura: <b>{db_user.aura}</b> (Type /aura to visit the store!)\n"
         "<i>Limits reset daily.</i>"
     )
     await message.answer(text)
