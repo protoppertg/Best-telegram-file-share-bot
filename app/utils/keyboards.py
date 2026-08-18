@@ -14,13 +14,14 @@ def main_menu_kb(show_premium: bool = True) -> ReplyKeyboardMarkup:
     if show_premium:
         kb = [
             [KeyboardButton(text="🔍 Search"), KeyboardButton(text="📤 Upload")],
-            [KeyboardButton(text="🎟️ Premium"), KeyboardButton(text="🤝 Referral")],
-            [KeyboardButton(text="❓ Help")]
+            [KeyboardButton(text="🤝 Referral"), KeyboardButton(text="✨ Aura Store")],
+            [KeyboardButton(text="🎟️ Premium"), KeyboardButton(text="❓ Help")]
         ]
     else:
         kb = [
             [KeyboardButton(text="🔍 Search"), KeyboardButton(text="📤 Upload")],
-            [KeyboardButton(text="🤝 Referral"), KeyboardButton(text="❓ Help")]
+            [KeyboardButton(text="🤝 Referral"), KeyboardButton(text="✨ Aura Store")],
+            [KeyboardButton(text="❓ Help")]
         ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
