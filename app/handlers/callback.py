@@ -69,6 +69,41 @@ async def give_kudos(callback: CallbackQuery, bot: Bot):
     except Exception:
         await callback.answer("Error sending kudos.", show_alert=True)
 
+@router.callback_query(F.data.startswith("btydl:"))
+async def bounty_download_callback(callback: CallbackQuery, bot: Bot):
+    """Handles the private bounty download button."""
+    try:
+        doc_id = int(callback.data.split(":")[1])
+        
+        async with get_session() as session:
+            doc = await doc_service.get_document_by_id(session, doc_id)
+
+        if not doc:
+            await callback.answer("File not found.", show_alert=True)
+            return
+            
+        await callback.answer("📥 Sending file...")
+        
+        safe_name = escape(sanitise_text(doc.file_name, 80))
+        safe_subject = escape(doc.subject or 'N/A')
+        
+        # Send the file to the requester
+        await bot.send_document(
+            chat_id=callback.from_user.id, 
+            document=doc.file_id, 
+            caption=f"📄 <b>{safe_name}</b>\n📚 {safe_subject}\n\nHere is your requested file!"
+        )
+        
+        # Delete the message with the button to "expire" the link
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+            
+    except Exception as e:
+        logger.error("bounty_download_error", error=str(e))
+        await callback.answer("Error downloading file.", show_alert=True)
+
 @router.callback_query(F.data == "check_sub")
 async def check_sub_callback(callback: CallbackQuery, bot: Bot):
     async with get_session() as session:
