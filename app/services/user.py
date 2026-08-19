@@ -14,6 +14,14 @@ from app.models import SearchLog, User, BotSetting, Bounty
 from app.database import get_session
 from app.utils.logger import logger
 
+def get_tier(aura: int) -> str:
+    """Determines the user's rank based on their Aura points."""
+    if aura >= 2000: return "💎 Diamond"
+    elif aura >= 1000: return "👑 Platinum"
+    elif aura >= 500: return "🥇 Gold"
+    elif aura >= 100: return "🥈 Silver"
+    else: return "🥉 Bronze"
+
 async def get_or_create_user(session: AsyncSession, telegram_id: int, username: Optional[str] = None, first_name: Optional[str] = None, last_name: Optional[str] = None) -> User:
     result = await session.execute(select(User).where(User.telegram_id == telegram_id))
     user = result.scalar_one_or_none()
@@ -257,7 +265,7 @@ async def get_stats(session: AsyncSession) -> dict:
     uploads_today = (await session.execute(select(func.count(Document.id)).where(func.date(Document.created_at) == today))).scalar() or 0
     
     active_bounties = (await session.execute(select(func.count(Bounty.id)).where(Bounty.fulfilled == False))).scalar() or 0
-    active_buddies = (await session.execute(select(func.count(User.id)).where((User.chat_partner_id != None) | (User.study_buddy_subject != None)))).scalar() or 0
+    active_buddies = (await session.execute(select(func.count(User.id)).where(User.study_buddy_subject != None))).scalar() or 0
     
     return {
         "total_documents": total_docs, "total_users": total_users, "premium_users": premium_users,
