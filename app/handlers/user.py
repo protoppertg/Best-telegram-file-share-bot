@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 import re
+import random
 from html import escape
 from typing import Any, Optional
 
@@ -87,31 +88,34 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
 @router.message(F.text == "✨ Aura Store")
 @router.message(Command("aura"))
 async def cmd_aura(message: Message, db_user: User | None = None):
-    """Aura Wallet & Store Dashboard"""
+    """Dynamic Aura Wallet & Store Dashboard"""
     if not db_user:
         await message.answer("Please send /start first to register.")
         return
         
-    tier = user_service.get_tier(db_user.aura)
+    level = user_service.get_level(db_user.aura)
+    rank = await user_service.get_global_rank(db_user.telegram_id)
+    flair = getattr(db_user, "custom_role", None) or "None"
+    perm_bonus = getattr(db_user, "perm_search_bonus", 0) or 0
     
     text = (
         "<b>✨ Aura Dashboard</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        f"Your Balance: <b>{db_user.aura} Aura</b>\n"
-        f"Your Rank: <b>{tier}</b>\n\n"
-        "<b>📈 How to Earn Aura:</b>\n"
-        "• Upload a file: <b>+10 Aura</b>\n"
-        "• Fulfill a Bounty: <b>+50 Aura</b>\n"
-        "• Invite a Friend: <b>+10 Aura</b>\n"
-        "• Receive Kudos (Thanks): <b>+1 Aura</b>\n\n"
+        f"Balance: <b>{db_user.aura} Aura</b>\n"
+        f"Level: <b>{level}</b> | Global Rank: <b>#{rank}</b>\n"
+        f"Custom Flair: <b>{flair}</b>\n"
+        f"Perm Search Bonus: <b>+{perm_bonus}</b>\n\n"
         "<b>🛒 Aura Store</b>\n"
-        "Spend your Aura points below!"
+        "Spend your Aura points below to unlock special perks!"
     )
     
     kb = InlineKeyboardBuilder()
-    kb.button(text="🔍 Buy +5 Searches Today (20 Aura)", callback_data="buy:searches")
-    kb.button(text="⭐ Buy 1 Day Premium (100 Aura)", callback_data="buy:premium_1")
-    kb.button(text="👑 Buy 7 Days Premium (500 Aura)", callback_data="buy:premium_7")
+    kb.button(text="🔍 +5 Searches Today (20 Aura)", callback_data="buy:searches")
+    kb.button(text="⭐ 1 Day Premium (100 Aura)", callback_data="buy:premium1")
+    kb.button(text="👑 7 Days Premium (500 Aura)", callback_data="buy:premium7")
+    kb.button(text="🎁 Mystery Box (30 Aura)", callback_data="buy:box")
+    kb.button(text="✨ Custom Flair (150 Aura)", callback_data="buy:flair")
+    kb.button(text="🚀 +1 Perm Search Limit (300 Aura)", callback_data="buy:permsearch")
     kb.adjust(1)
     
     await message.answer(text, reply_markup=kb.as_markup())
@@ -125,44 +129,75 @@ async def process_purchase(callback: CallbackQuery, db_user: User | None = None)
         
     item = callback.data.split(":")[1]
     
+    async def charge(cost: int) -> bool:
+        if db_user.aura < cost:
+            await callback.answer(f"Insufficient Aura! You need {cost} but have {db_user.aura}.", show_alert=True)
+            return False
+        return await user_service.deduct_aura(db_user.telegram_id, cost)
+
     if item == "searches":
         cost = 20
-        if db_user.aura < cost:
-            await callback.answer(f"Insufficient Aura! You need {cost} but have {db_user.aura}.", show_alert=True)
-            return
-        success = await user_service.deduct_aura(db_user.telegram_id, cost)
-        if success:
+        if await charge(cost):
             await user_service.grant_bonus_searches(db_user.telegram_id, 5)
             await callback.answer("✅ Purchased +5 Searches for today!", show_alert=True)
-            await callback.message.edit_text(f"✅ <b>Purchase Successful!</b>\n\nYou spent {cost} Aura and gained +5 searches for today.\nRemaining Aura: <b>{db_user.aura - cost}</b>")
-        else:
-            await callback.answer("Transaction failed.", show_alert=True)
+            await callback.message.edit_text(f"✅ <b>Purchase Successful!</b>\n\nYou spent {cost} Aura for +5 searches today.\nRemaining Aura: <b>{db_user.aura - cost}</b>")
             
-    elif item == "premium_1":
+    elif item == "premium1":
         cost = 100
-        if db_user.aura < cost:
-            await callback.answer(f"Insufficient Aura! You need {cost} but have {db_user.aura}.", show_alert=True)
-            return
-        success = await user_service.deduct_aura(db_user.telegram_id, cost)
-        if success:
+        if await charge(cost):
             await user_service.activate_premium(db_user.telegram_id, 1)
             await callback.answer("✅ Purchased 1 Day Premium!", show_alert=True)
-            await callback.message.edit_text(f"✅ <b>Purchase Successful!</b>\n\nYou spent {cost} Aura and gained 1 Day of Premium!\nRemaining Aura: <b>{db_user.aura - cost}</b>")
-        else:
-            await callback.answer("Transaction failed.", show_alert=True)
+            await callback.message.edit_text(f"✅ <b>Purchase Successful!</b>\n\nYou spent {cost} Aura for 1 Day of Premium!\nRemaining Aura: <b>{db_user.aura - cost}</b>")
 
-    elif item == "premium_7":
+    elif item == "premium7":
         cost = 500
-        if db_user.aura < cost:
-            await callback.answer(f"Insufficient Aura! You need {cost} but have {db_user.aura}.", show_alert=True)
-            return
-        success = await user_service.deduct_aura(db_user.telegram_id, cost)
-        if success:
+        if await charge(cost):
             await user_service.activate_premium(db_user.telegram_id, 7)
             await callback.answer("✅ Purchased 7 Days Premium!", show_alert=True)
-            await callback.message.edit_text(f"✅ <b>Purchase Successful!</b>\n\nYou spent {cost} Aura and gained 7 Days of Premium!\nRemaining Aura: <b>{db_user.aura - cost}</b>")
-        else:
-            await callback.answer("Transaction failed.", show_alert=True)
+            await callback.message.edit_text(f"✅ <b>Purchase Successful!</b>\n\nYou spent {cost} Aura for 7 Days of Premium!\nRemaining Aura: <b>{db_user.aura - cost}</b>")
+
+    elif item == "box":
+        cost = 30
+        if await charge(cost):
+            roll = random.random()
+            reward_text = ""
+            if roll < 0.01: # 1% Jackpot
+                await user_service.activate_premium(db_user.telegram_id, 7)
+                reward_text = "🎉 JACKPOT! You won 7 Days of Premium!"
+            elif roll < 0.20: # 19% Premium
+                await user_service.activate_premium(db_user.telegram_id, 1)
+                reward_text = "🎉 Awesome! You won 1 Day of Premium!"
+            elif roll < 0.50: # 30% Aura Back
+                await user_service.add_aura(db_user.telegram_id, 20)
+                reward_text = "💰 Nice! You won 20 Aura back!"
+            else: # 50% Searches
+                await user_service.grant_bonus_searches(db_user.telegram_id, 3)
+                reward_text = "🔍 You won +3 Searches for today!"
+            
+            await callback.answer(f"🎁 {reward_text}", show_alert=True)
+            await callback.message.edit_text(f"🎁 <b>Mystery Box Opened!</b>\n\n{reward_text}\n\nRemaining Aura: <b>{db_user.aura - cost + (20 if '20 Aura' in reward_text else 0)}</b>")
+
+    elif item == "flair":
+        cost = 150
+        if await charge(cost):
+            async with get_session() as session:
+                me = await session.execute(select(User).where(User.telegram_id == db_user.telegram_id))
+                me = me.scalar_one_or_none()
+                if me:
+                    me.custom_role = "🌟 Elite"
+            await callback.answer("✅ Custom Flair equipped!", show_alert=True)
+            await callback.message.edit_text(f"✅ <b>Purchase Successful!</b>\n\nYou bought the 🌟 Elite flair! It will now show on the leaderboard.\nRemaining Aura: <b>{db_user.aura - cost}</b>")
+
+    elif item == "permsearch":
+        cost = 300
+        if await charge(cost):
+            async with get_session() as session:
+                me = await session.execute(select(User).where(User.telegram_id == db_user.telegram_id))
+                me = me.scalar_one_or_none()
+                if me:
+                    me.perm_search_bonus = (me.perm_search_bonus or 0) + 1
+            await callback.answer("✅ +1 Permanent Search Limit!", show_alert=True)
+            await callback.message.edit_text(f"✅ <b>Purchase Successful!</b>\n\nYour daily search limit is permanently increased by +1!\nRemaining Aura: <b>{db_user.aura - cost}</b>")
 
 @router.message(Command("bounty"))
 async def cmd_bounty(message: Message, command: CommandObject, db_user: User | None = None):
@@ -287,8 +322,9 @@ async def cmd_leaderboard(message: Message):
         
     text = "🏆 <b>Top Contributors</b>\n━━━━━━━━━━━━━━━━━━━━\n"
     for i, u in enumerate(top_users, 1):
-        tier = user_service.get_tier(u.aura)
-        text += f"{i}. @{u.username or 'Unknown'} - <b>{u.aura} Aura</b> ({tier})\n"
+        level = user_service.get_level(u.aura)
+        flair = getattr(u, "custom_role", None) or ""
+        text += f"{i}. {flair} @{u.username or 'Unknown'}\n   Level <b>{level}</b> | <b>{u.aura} Aura</b>\n"
         
     await message.answer(text)
 
@@ -344,7 +380,7 @@ async def cmd_help(message: Message):
         "<i>Example:</i> <code>math subject:Algebra year:2023</code></blockquote>\n"
         "<blockquote><b>3. Bounty (</b><code>/bounty</code><b>)</b>\nRequest a file you can't find. Type /bounty to see what others need. If you upload it, you get +50 Aura!</blockquote>\n"
         "<blockquote><b>4. Study Buddy (</b><code>/studybuddy</code><b>)</b>\nFind a study partner instantly. If no one is online, you'll be put in a queue and notified when someone joins!</blockquote>\n"
-        "<blockquote><b>5. Aura Store (</b>✨ Aura Store Button<b>)</b>\nEarn Aura by helping others, and spend it in the store for extra searches and Premium!</blockquote>"
+        "<blockquote><b>5. Aura Store (</b>✨ Aura Store Button<b>)</b>\nEarn Aura by helping others, and spend it in the store for extra searches, Premium, Mystery Boxes, and permanent perks!</blockquote>"
     )
     await message.answer(text)
 
@@ -370,14 +406,18 @@ async def cmd_usage(message: Message, db_user: User | None = None):
         return
     search_limit = await user_service.get_user_search_limit(db_user)
     upload_limit = await user_service.get_user_upload_limit(db_user)
-    tier = user_service.get_tier(db_user.aura)
+    level = user_service.get_level(db_user.aura)
+    rank = await user_service.get_global_rank(db_user.telegram_id)
+    flair = getattr(db_user, "custom_role", None) or "None"
     
     text = (
         "<b>Your Daily Usage</b> 📊\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         f"<blockquote>🔍 Searches: <b>{db_user.search_count} / {search_limit}</b>\n"
         f"📤 Uploads: <b>{db_user.upload_count} / {upload_limit}</b></blockquote>\n"
-        f"✨ Aura: <b>{db_user.aura}</b> ({tier})\n"
+        f"✨ Aura: <b>{db_user.aura}</b>\n"
+        f"📊 Level: <b>{level}</b> | Global Rank: <b>#{rank}</b>\n"
+        f"👑 Flair: <b>{flair}</b>\n"
         "<i>Limits reset daily.</i>"
     )
     await message.answer(text)
