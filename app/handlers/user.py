@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import uuid
 import re
-import random
 from html import escape
 from typing import Any, Optional
 
@@ -30,9 +29,6 @@ from app.utils.validators import is_valid_search_query, parse_keywords, parse_ye
 
 router = Router()
 
-# Random Indian names for the Ghost AI
-GHOST_NAMES = ["Rahul", "Priya", "Amit", "Sneha", "Rohan", "Anjali", "Vikram", "Pooja", "Arjun", "Kavya", "Sanjay", "Neha"]
-
 class UploadStates(StatesGroup):
     waiting_file_name = State()
     waiting_subject = State()
@@ -46,15 +42,6 @@ async def _is_premium_enabled() -> bool:
         prem_enabled = await session.execute(select(BotSetting).where(BotSetting.key == "premium_enabled"))
         prem_enabled = prem_enabled.scalar_one_or_none()
         return not (prem_enabled and prem_enabled.value == "false")
-
-def detect_language(text: str) -> str:
-    if re.search(r'[\u0900-\u097F]', text):
-        return "Hindi"
-    hinglish_words = ['hai', 'kya', 'kaise', 'mera', 'tera', 'aaj', 'kal', 'padhai', 'exam', 'bhai', 'yaar', 'nahi', 'haan']
-    words = text.lower().split()
-    if any(word in hinglish_words for word in words):
-        return "Hinglish (Hindi in English script)"
-    return "English"
 
 @router.message(Command("start"))
 async def cmd_start(message: Message, state: FSMContext, command: CommandObject):
@@ -105,10 +92,13 @@ async def cmd_aura(message: Message, db_user: User | None = None):
         await message.answer("Please send /start first to register.")
         return
         
+    tier = user_service.get_tier(db_user.aura)
+    
     text = (
         "<b>✨ Aura Dashboard</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        f"Your Balance: <b>{db_user.aura} Aura</b>\n\n"
+        f"Your Balance: <b>{db_user.aura} Aura</b>\n"
+        f"Your Rank: <b>{tier}</b>\n\n"
         "<b>📈 How to Earn Aura:</b>\n"
         "• Upload a file: <b>+10 Aura</b>\n"
         "• Fulfill a Bounty: <b>+50 Aura</b>\n"
@@ -120,7 +110,8 @@ async def cmd_aura(message: Message, db_user: User | None = None):
     
     kb = InlineKeyboardBuilder()
     kb.button(text="🔍 Buy +5 Searches Today (20 Aura)", callback_data="buy:searches")
-    kb.button(text="⭐ Buy 1 Day Premium (100 Aura)", callback_data="buy:premium")
+    kb.button(text="⭐ Buy 1 Day Premium (100 Aura)", callback_data="buy:premium_1")
+    kb.button(text="👑 Buy 7 Days Premium (500 Aura)", callback_data="buy:premium_7")
     kb.adjust(1)
     
     await message.answer(text, reply_markup=kb.as_markup())
@@ -139,7 +130,6 @@ async def process_purchase(callback: CallbackQuery, db_user: User | None = None)
         if db_user.aura < cost:
             await callback.answer(f"Insufficient Aura! You need {cost} but have {db_user.aura}.", show_alert=True)
             return
-            
         success = await user_service.deduct_aura(db_user.telegram_id, cost)
         if success:
             await user_service.grant_bonus_searches(db_user.telegram_id, 5)
@@ -148,17 +138,29 @@ async def process_purchase(callback: CallbackQuery, db_user: User | None = None)
         else:
             await callback.answer("Transaction failed.", show_alert=True)
             
-    elif item == "premium":
+    elif item == "premium_1":
         cost = 100
         if db_user.aura < cost:
             await callback.answer(f"Insufficient Aura! You need {cost} but have {db_user.aura}.", show_alert=True)
             return
-            
         success = await user_service.deduct_aura(db_user.telegram_id, cost)
         if success:
             await user_service.activate_premium(db_user.telegram_id, 1)
             await callback.answer("✅ Purchased 1 Day Premium!", show_alert=True)
             await callback.message.edit_text(f"✅ <b>Purchase Successful!</b>\n\nYou spent {cost} Aura and gained 1 Day of Premium!\nRemaining Aura: <b>{db_user.aura - cost}</b>")
+        else:
+            await callback.answer("Transaction failed.", show_alert=True)
+
+    elif item == "premium_7":
+        cost = 500
+        if db_user.aura < cost:
+            await callback.answer(f"Insufficient Aura! You need {cost} but have {db_user.aura}.", show_alert=True)
+            return
+        success = await user_service.deduct_aura(db_user.telegram_id, cost)
+        if success:
+            await user_service.activate_premium(db_user.telegram_id, 7)
+            await callback.answer("✅ Purchased 7 Days Premium!", show_alert=True)
+            await callback.message.edit_text(f"✅ <b>Purchase Successful!</b>\n\nYou spent {cost} Aura and gained 7 Days of Premium!\nRemaining Aura: <b>{db_user.aura - cost}</b>")
         else:
             await callback.answer("Transaction failed.", show_alert=True)
 
@@ -221,16 +223,14 @@ async def cmd_studybuddy(message: Message, command: CommandObject, db_user: User
             await message.answer("Error: User profile not found.")
             return
             
-        ai_enabled_res = await session.execute(select(BotSetting).where(BotSetting.key == "ai_study_buddy_enabled"))
-        ai_enabled_setting = ai_enabled_res.scalar_one_or_none()
-        ai_enabled = not (ai_enabled_setting and ai_enabled_setting.value == "false")
-            
+        # Find a real user waiting in the queue
         match_res = await session.execute(
             select(User).where(User.study_buddy_subject == subject.capitalize(), User.telegram_id != db_user.telegram_id).limit(1)
         )
         match = match_res.scalar_one_or_none()
         
         if match:
+            # Connect them in-bot
             match.study_buddy_subject = None
             match.chat_partner_id = db_user.telegram_id
             
@@ -241,22 +241,11 @@ async def cmd_studybuddy(message: Message, command: CommandObject, db_user: User
             await message.answer(f"👥 <b>Study Buddy Found!</b>\nYou are now connected with <b>@{escape(match.username or 'Buddy')}</b> for <b>{safe_subject}</b>.\n<blockquote>Say hi! Type /endchat to disconnect.</blockquote>")
             await message.bot.send_message(match.telegram_id, f"👥 <b>Study Buddy Found!</b>\nYou are now connected with <b>@{escape(message.from_user.username or 'Buddy')}</b> for <b>{safe_subject}</b>.\n<blockquote>Say hi! Type /endchat to disconnect.</blockquote>")
         else:
-            if ai_enabled:
-                ai_name = random.choice(GHOST_NAMES)
-                me.study_buddy_subject = subject.capitalize()
-                me.ai_name = ai_name
-                me.ai_language = "English"
-                await session.flush()
-                
-                cache = await get_cache()
-                await cache.delete(f"ai_chat_history:{db_user.telegram_id}")
-                
-                await message.answer(f"👥 <b>Study Buddy Found!</b>\nYou are now connected with <b>{ai_name}</b> for <b>{safe_subject}</b>.\n<blockquote>Say hi! Type /endchat to disconnect.</blockquote>")
-            else:
-                me.study_buddy_subject = subject.capitalize()
-                me.ai_name = None
-                await session.flush()
-                await message.answer(f"⏳ <b>Searching for a Study Buddy...</b>\nYou are now in the queue for <b>{safe_subject}</b>.\n<blockquote>We will notify you the moment someone else joins! Type /endchat to leave the queue.</blockquote>")
+            # No match found. Put user in waiting queue.
+            me.study_buddy_subject = subject.capitalize()
+            me.ai_name = None # Ensure AI is off
+            await session.flush()
+            await message.answer(f"⏳ <b>Searching for a Study Buddy...</b>\nYou are now in the queue for <b>{safe_subject}</b>.\n<blockquote>We will notify you the moment someone else joins! Type /endchat to leave the queue.</blockquote>")
 
 @router.message(Command("endchat"))
 async def cmd_endchat(message: Message, db_user: User | None = None):
@@ -282,9 +271,6 @@ async def cmd_endchat(message: Message, db_user: User | None = None):
             if partner: partner.chat_partner_id = None
         await session.flush()
         
-    cache = await get_cache()
-    await cache.delete(f"ai_chat_history:{db_user.telegram_id}")
-        
     await message.answer("👋 <b>Chat Ended.</b>\nYou have been disconnected.")
     if not is_ai and partner_id:
         try:
@@ -301,7 +287,8 @@ async def cmd_leaderboard(message: Message):
         
     text = "🏆 <b>Top Contributors</b>\n━━━━━━━━━━━━━━━━━━━━\n"
     for i, u in enumerate(top_users, 1):
-        text += f"{i}. @{u.username or 'Unknown'} - <b>{u.aura} Aura</b>\n"
+        tier = user_service.get_tier(u.aura)
+        text += f"{i}. @{u.username or 'Unknown'} - <b>{u.aura} Aura</b> ({tier})\n"
         
     await message.answer(text)
 
@@ -356,7 +343,7 @@ async def cmd_help(message: Message):
         "<blockquote><b>2. Advanced Filters</b>\nNarrow down results instantly.\n"
         "<i>Example:</i> <code>math subject:Algebra year:2023</code></blockquote>\n"
         "<blockquote><b>3. Bounty (</b><code>/bounty</code><b>)</b>\nRequest a file you can't find. Type /bounty to see what others need. If you upload it, you get +50 Aura!</blockquote>\n"
-        "<blockquote><b>4. Study Buddy (</b><code>/studybuddy</code><b>)</b>\nFind a study partner instantly. If no one is available, PrepCore AI will help you!</blockquote>\n"
+        "<blockquote><b>4. Study Buddy (</b><code>/studybuddy</code><b>)</b>\nFind a study partner instantly. If no one is online, you'll be put in a queue and notified when someone joins!</blockquote>\n"
         "<blockquote><b>5. Aura Store (</b>✨ Aura Store Button<b>)</b>\nEarn Aura by helping others, and spend it in the store for extra searches and Premium!</blockquote>"
     )
     await message.answer(text)
@@ -383,12 +370,14 @@ async def cmd_usage(message: Message, db_user: User | None = None):
         return
     search_limit = await user_service.get_user_search_limit(db_user)
     upload_limit = await user_service.get_user_upload_limit(db_user)
+    tier = user_service.get_tier(db_user.aura)
+    
     text = (
         "<b>Your Daily Usage</b> 📊\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         f"<blockquote>🔍 Searches: <b>{db_user.search_count} / {search_limit}</b>\n"
         f"📤 Uploads: <b>{db_user.upload_count} / {upload_limit}</b></blockquote>\n"
-        f"✨ Aura: <b>{db_user.aura}</b> (Click ✨ Aura Store button to visit the store!)\n"
+        f"✨ Aura: <b>{db_user.aura}</b> ({tier})\n"
         "<i>Limits reset daily.</i>"
     )
     await message.answer(text)
@@ -419,7 +408,7 @@ async def cmd_premium(message: Message, db_user: User | None = None):
         f"• Unlimited searches per day\n"
         f"• No ads/short links when downloading files\n\n"
         f"<b>How to get Premium:</b>\n"
-        f"Send a Rs. 100 gift card to the admin. Once verified, the admin will grant you premium status manually."
+        f"You can buy it from the <b>✨ Aura Store</b> using your Aura points, or ask the admin!"
     )
         
     text = text_setting.value if text_setting and text_setting.value else default_text
@@ -453,35 +442,6 @@ async def handle_text(message: Message, db_user: User | None = None):
             await message.answer("❌ Failed to send message. Your buddy may have left.")
         return
         
-    if db_user and db_user.study_buddy_subject and db_user.ai_name:
-        await message.bot.send_chat_action(message.chat.id, "typing")
-        
-        detected_lang = detect_language(query)
-        if not db_user.ai_language or db_user.ai_language == "English":
-            if detected_lang != "English":
-                async with get_session() as session:
-                    me_res = await session.execute(select(User).where(User.telegram_id == db_user.telegram_id))
-                    me = me_res.scalar_one_or_none()
-                    if me:
-                        me.ai_language = detected_lang
-                        await session.flush()
-                db_user.ai_language = detected_lang
-                
-        cache = await get_cache()
-        history_key = f"ai_chat_history:{db_user.telegram_id}"
-        chat_history = await cache.get(history_key) or []
-        
-        from app.services.ai import get_ghost_ai_response
-        ai_reply = await get_ghost_ai_response(db_user.ai_name, db_user.study_buddy_subject, db_user.ai_language or "English", query, chat_history)
-        
-        chat_history.append({"role": "user", "content": query})
-        chat_history.append({"role": "assistant", "content": ai_reply})
-        chat_history = chat_history[-4:]
-        await cache.set(history_key, chat_history, ttl=3600)
-        
-        await message.answer(ai_reply)
-        return
-
     if query in ["🔍 Search", "📤 Upload", "🎟️ Premium", "🤝 Referral", "❓ Help", "✨ Aura Store"]:
         return
     if not is_valid_search_query(query):
