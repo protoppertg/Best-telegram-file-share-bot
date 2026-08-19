@@ -41,6 +41,8 @@ async def init_db():
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_banned BOOLEAN DEFAULT false",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_count INTEGER DEFAULT 0",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS aura INTEGER DEFAULT 0",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS perm_search_bonus INTEGER DEFAULT 0",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS custom_role VARCHAR(50)",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS study_buddy_subject VARCHAR(255)",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS chat_partner_id BIGINT",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS ai_name VARCHAR(255)",
