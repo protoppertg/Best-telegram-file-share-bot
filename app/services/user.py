@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional, List
 import re
+import math
 
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,13 +15,21 @@ from app.models import SearchLog, User, BotSetting, Bounty
 from app.database import get_session
 from app.utils.logger import logger
 
-def get_tier(aura: int) -> str:
-    """Determines the user's rank based on their Aura points."""
-    if aura >= 2000: return "💎 Diamond"
-    elif aura >= 1000: return "👑 Platinum"
-    elif aura >= 500: return "🥇 Gold"
-    elif aura >= 100: return "🥈 Silver"
-    else: return "🥉 Bronze"
+def get_level(aura: int) -> int:
+    """Calculates dynamic XP Level based on Aura points."""
+    if aura <= 0: return 0
+    return math.floor(0.1 * math.sqrt(aura))
+
+async def get_global_rank(telegram_id: int) -> int:
+    """Calculates the user's global rank based on how many users have more Aura."""
+    async with get_session() as session:
+        user_res = await session.execute(select(User).where(User.telegram_id == telegram_id))
+        user = user_res.scalar_one_or_none()
+        if not user: return 0
+        
+        count_res = await session.execute(select(func.count(User.id)).where(User.aura > user.aura))
+        higher_count = count_res.scalar() or 0
+        return higher_count + 1
 
 async def get_or_create_user(session: AsyncSession, telegram_id: int, username: Optional[str] = None, first_name: Optional[str] = None, last_name: Optional[str] = None) -> User:
     result = await session.execute(select(User).where(User.telegram_id == telegram_id))
@@ -64,17 +73,19 @@ async def get_user_search_limit(user: User) -> int:
         r_amount = int(r_amount_val) if r_amount_val and r_amount_val.isdigit() else 0
         
         ref_bonus = (r_amount * user.referral_count) if r_type == "searches" else 0
+        # Safely get perm_search_bonus
+        perm_bonus = getattr(user, "perm_search_bonus", 0) or 0
 
         if not prem_enabled:
             base_val = settings_dict.get("free_search_limit") or str(settings.FREE_SEARCH_LIMIT)
-            return int(base_val) + ref_bonus
+            return int(base_val) + ref_bonus + perm_bonus
         
         if user.is_premium:
             base_val = settings_dict.get("premium_search_limit") or str(settings.PREMIUM_SEARCH_LIMIT)
         else:
             base_val = settings_dict.get("free_search_limit") or str(settings.FREE_SEARCH_LIMIT)
         
-        return int(base_val) + ref_bonus
+        return int(base_val) + ref_bonus + perm_bonus
 
 async def get_user_upload_limit(user: User) -> int:
     return settings.PREMIUM_UPLOAD_LIMIT if user.is_premium else settings.FREE_UPLOAD_LIMIT
