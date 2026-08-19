@@ -25,6 +25,8 @@ class User(Base):
     upload_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     referral_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     aura: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    perm_search_bonus: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    custom_role: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     study_buddy_subject: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     chat_partner_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     ai_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
