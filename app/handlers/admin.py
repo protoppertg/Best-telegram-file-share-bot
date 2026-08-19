@@ -15,7 +15,7 @@ from sqlalchemy import func, select
 
 from app.config import settings
 from app.database import get_session
-from app.models import AdminUser, BotSetting, Document, User
+from app.models import AdminUser, BotSetting, Bounty, Document, User
 from app.services import document as doc_service
 from app.services import user as user_service
 from app.utils.logger import logger
@@ -25,7 +25,6 @@ router = Router()
 
 class AdminFilter(BaseFilter):
     async def __call__(self, message: Message) -> bool:
-        # Allow channel posts to bypass the admin check completely
         if message.chat.type == "channel":
             return True
         return message.from_user and message.from_user.id in settings.admin_ids_list
@@ -66,6 +65,7 @@ def admin_menu_kb(perms: list[str] = []):
     if "documents" in perms:
         kb.button(text="📄 Documents", callback_data="adm:docs:1")
         kb.button(text="⏳ Pending", callback_data="adm:pend:1")
+    kb.button(text="🎯 Manage Bounties", callback_data="adm:bty")
     if "forcesub" in perms: kb.button(text="⚙️ Force Sub", callback_data="adm:fs")
     if "broadcast" in perms: kb.button(text="📢 Broadcast", callback_data="adm:bcast")
     
@@ -205,6 +205,43 @@ async def cb_admin_stats(callback: CallbackQuery):
     await callback.message.edit_text(text, reply_markup=admin_stats_kb())
     await callback.answer()
 
+@router.callback_query(F.data == "adm:bty")
+async def cb_admin_bounties(callback: CallbackQuery):
+    """Manage active bounties."""
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    async with get_session() as session:
+        res = await session.execute(select(Bounty).where(Bounty.fulfilled == False).order_by(Bounty.created_at.desc()))
+        bounties = res.scalars().all()
+        
+    if not bounties:
+        await callback.answer("No active bounties!", show_alert=True)
+        return
+        
+    text = "🎯 <b>Manage Active Bounties</b>\n\nTap an item below to delete it (in case of spam/irrelevant)."
+    kb = InlineKeyboardBuilder()
+    for b in bounties:
+        kb.button(text=f"🗑 {escape(b.query[:40])}", callback_data=f"adm:delbty:{b.id}")
+    kb.adjust(1)
+    kb.button(text="🔙 Back to Menu", callback_data="adm:menu")
+    
+    await callback.message.edit_text(text, reply_markup=kb.as_markup())
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("adm:delbty:"))
+async def cb_admin_delete_bounty(callback: CallbackQuery):
+    """Deletes a specific bounty."""
+    bounty_id = int(callback.data.split(":")[2])
+    async with get_session() as session:
+        res = await session.execute(select(Bounty).where(Bounty.id == bounty_id))
+        bounty = res.scalar_one_or_none()
+        if bounty:
+            await session.delete(bounty)
+            await session.flush()
+            
+    await callback.answer("✅ Bounty deleted successfully!", show_alert=True)
+    # Refresh the list
+    await cb_admin_bounties(callback)
+
 @router.callback_query(F.data == "adm:bcast")
 async def cb_admin_bcast(callback: CallbackQuery, state: FSMContext):
     if not await has_permission(callback.from_user.id, "broadcast"): return
@@ -297,7 +334,7 @@ async def fs_clear(message: Message, state: FSMContext):
         await save_force_sub_channels(session, [])
     await message.answer("🗑 All Force Sub channels cleared.", reply_markup=admin_menu_kb(["forcesub"]))
 
-# ── Auto-Index Channel Posts (Fixed & Bulletproof) ─────────────
+# ── Auto-Index Channel Posts ─────────────────────
 
 @router.channel_post(F.document)
 async def auto_index_channel_post(message: Message, bot: Bot):
@@ -325,7 +362,6 @@ async def auto_index_channel_post(message: Message, bot: Bot):
                 subject=tags["subject"], category=tags["category"], class_name=tags["class_name"], year=tags["year"], approved=True
             )
 
-            # Check if this fulfills a bounty!
             matched_bounty = await user_service.check_bounty_match(session, doc.file_name, 0)
             if matched_bounty:
                 matched_bounty.fulfilled = True
@@ -333,7 +369,6 @@ async def auto_index_channel_post(message: Message, bot: Bot):
                 await session.flush()
                 
                 try:
-                    # Send notification to requester with a private download button
                     from aiogram.utils.keyboard import InlineKeyboardBuilder
                     kb = InlineKeyboardBuilder()
                     kb.button(text="📥 Download File", callback_data=f"btydl:{doc.id}")
@@ -402,7 +437,8 @@ async def cb_admin_user_actions(callback: CallbackQuery, state: FSMContext):
         if not user: return
         prem_status = "⭐ ACTIVE" if user.is_premium else "❌ INACTIVE"
         ban_status = "🚫 BANNED" if user.is_banned else "✅ ACTIVE"
-        text = (f"👤 <b>User Profile</b>\n\n🆔 ID: <code>{user.telegram_id}</code>\n👤 Name: {escape(user.first_name or 'N/A')}\n📊 Search Count: {user.search_count}\n🎟️ Premium: {prem_status}\n🚫 Status: {ban_status}\n✨ Aura: <b>{user.aura}</b>")
+        tier = user_service.get_tier(user.aura)
+        text = (f"👤 <b>User Profile</b>\n\n🆔 ID: <code>{user.telegram_id}</code>\n👤 Name: {escape(user.first_name or 'N/A')}\n📊 Search Count: {user.search_count}\n🎟️ Premium: {prem_status}\n🚫 Status: {ban_status}\n✨ Aura: <b>{user.aura}</b> ({tier})")
         await callback.message.edit_text(text, reply_markup=admin_user_actions_kb(telegram_id, user.is_premium, user.is_banned))
         await callback.answer()
     elif len(parts) == 4:
