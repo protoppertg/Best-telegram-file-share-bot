@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     REDIS_URL: str = ""
     ADMIN_IDS: str = ""
     CHANNEL_ID: str
+    ADMIN_UPLOAD_CHANNEL_ID: str = "" # New: Channel where sub-admins can upload
 
     FREE_SEARCH_LIMIT: int = 5
     PREMIUM_SEARCH_LIMIT: int = 100
