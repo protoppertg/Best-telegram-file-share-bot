@@ -78,6 +78,8 @@ async def repair_database():
         await session.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS chat_partner_id BIGINT"))
         await session.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS ai_name VARCHAR(255)"))
         await session.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS ai_language VARCHAR(50)"))
+        await session.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS perm_search_bonus INTEGER DEFAULT 0"))
+        await session.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS custom_role VARCHAR(50)"))
 
 @router.get("/login", response_class=templates.TemplateResponse)
 async def admin_login(request: Request):
@@ -147,6 +149,7 @@ async def admin_settings(request: Request):
         referral_reward_type = await get_setting(session, "referral_reward_type", "searches")
         referral_reward_amount = await get_setting(session, "referral_reward_amount", "1")
         ai_study_buddy_enabled = await get_setting(session, "ai_study_buddy_enabled", "true")
+        admin_upload_channel_id = await get_setting(session, "admin_upload_channel_id", "")
         channels = await get_force_sub_channels(session)
         
     return templates.TemplateResponse(request, "settings.html", {
@@ -158,11 +161,13 @@ async def admin_settings(request: Request):
         "shortlink_enabled": shortlink_enabled == "true", "shortlink_api_url": shortlink_api_url,
         "shortlink_api_key": shortlink_api_key, "referral_reward_type": referral_reward_type,
         "referral_reward_amount": referral_reward_amount, "channels": channels, 
-        "ai_study_buddy_enabled": ai_study_buddy_enabled == "true", "active": "settings"
+        "ai_study_buddy_enabled": ai_study_buddy_enabled == "true", 
+        "admin_upload_channel_id": admin_upload_channel_id,
+        "active": "settings"
     })
 
 @router.post("/settings", dependencies=[Depends(verify_admin)])
-async def admin_settings_post(request: Request, search_enabled: str = Form("off"), auto_delete_enabled: str = Form("off"), auto_delete_seconds: str = Form("3600"), protect_forwarding: str = Form("off"), post_file_message: str = Form(""), start_text: str = Form(""), about_text: str = Form(""), premium_text: str = Form(""), premium_enabled: str = Form("off"), free_search_limit: str = Form("5"), prem_search_limit: str = Form("100"), shortlink_enabled: str = Form("off"), shortlink_api_url: str = Form(""), shortlink_api_key: str = Form(""), referral_reward_type: str = Form("searches"), referral_reward_amount: str = Form("1"), ai_study_buddy_enabled: str = Form("off")):
+async def admin_settings_post(request: Request, search_enabled: str = Form("off"), auto_delete_enabled: str = Form("off"), auto_delete_seconds: str = Form("3600"), protect_forwarding: str = Form("off"), post_file_message: str = Form(""), start_text: str = Form(""), about_text: str = Form(""), premium_text: str = Form(""), premium_enabled: str = Form("off"), free_search_limit: str = Form("5"), prem_search_limit: str = Form("100"), shortlink_enabled: str = Form("off"), shortlink_api_url: str = Form(""), shortlink_api_key: str = Form(""), referral_reward_type: str = Form("searches"), referral_reward_amount: str = Form("1"), ai_study_buddy_enabled: str = Form("off"), admin_upload_channel_id: str = Form("")):
     if "forcesub" not in request.state.perms:
         return RedirectResponse(url="/admin/?status=unauthorized", status_code=303)
     try:
@@ -190,6 +195,7 @@ async def admin_settings_post(request: Request, search_enabled: str = Form("off"
             await save_setting("referral_reward_type", referral_reward_type or "searches")
             await save_setting("referral_reward_amount", referral_reward_amount if referral_reward_amount and referral_reward_amount.isdigit() else "1")
             await save_setting("ai_study_buddy_enabled", "true" if ai_study_buddy_enabled == "on" else "false")
+            await save_setting("admin_upload_channel_id", admin_upload_channel_id.strip())
         await log_admin_action(request, "Updated Bot Settings")
         return RedirectResponse(url="/admin/settings", status_code=303)
     except Exception as e:
@@ -550,7 +556,7 @@ async def migrate_data(request: Request):
         return f"❌ Database Connection Failed: {e}"
 
     try:
-        await new_conn.execute("CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, telegram_id BIGINT UNIQUE NOT NULL, username VARCHAR(255), first_name VARCHAR(255), last_name VARCHAR(255), is_premium BOOLEAN DEFAULT false, premium_expiry TIMESTAMP WITH TIME ZONE, is_banned BOOLEAN DEFAULT false, search_count INTEGER DEFAULT 0, upload_count INTEGER DEFAULT 0, referral_count INTEGER DEFAULT 0, aura INTEGER DEFAULT 0, study_buddy_subject VARCHAR(255), chat_partner_id BIGINT, ai_name VARCHAR(255), ai_language VARCHAR(50), last_reset_date DATE DEFAULT CURRENT_DATE, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(), updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());")
+        await new_conn.execute("CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, telegram_id BIGINT UNIQUE NOT NULL, username VARCHAR(255), first_name VARCHAR(255), last_name VARCHAR(255), is_premium BOOLEAN DEFAULT false, premium_expiry TIMESTAMP WITH TIME ZONE, is_banned BOOLEAN DEFAULT false, search_count INTEGER DEFAULT 0, upload_count INTEGER DEFAULT 0, referral_count INTEGER DEFAULT 0, aura INTEGER DEFAULT 0, perm_search_bonus INTEGER DEFAULT 0, custom_role VARCHAR(50), study_buddy_subject VARCHAR(255), chat_partner_id BIGINT, ai_name VARCHAR(255), ai_language VARCHAR(50), last_reset_date DATE DEFAULT CURRENT_DATE, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(), updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());")
         await new_conn.execute("CREATE TABLE IF NOT EXISTS documents (id SERIAL PRIMARY KEY, file_id TEXT NOT NULL, message_id BIGINT, file_name TEXT NOT NULL, subject VARCHAR(255), category VARCHAR(100), class_name VARCHAR(100), year INTEGER, keywords TEXT[], description TEXT, uploaded_by BIGINT, approved BOOLEAN DEFAULT true, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(), updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());")
         await new_conn.execute("CREATE TABLE IF NOT EXISTS bot_settings (key VARCHAR(50) PRIMARY KEY, value TEXT);")
         await new_conn.execute("CREATE TABLE IF NOT EXISTS admin_users (id SERIAL PRIMARY KEY, telegram_id BIGINT UNIQUE NOT NULL, name VARCHAR(255), password VARCHAR(255), permissions TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());")
@@ -583,31 +589,3 @@ async def migrate_data(request: Request):
     await old_conn.close()
     await new_conn.close()
     return f"✅ Migration Complete! Copied {len(users)} users, {len(docs)} documents, and {len(settings_row)} settings."
-# ── Renumber Documents ─────────────────────────
-
-@router.get("/renumber_docs", dependencies=[Depends(verify_admin)])
-async def renumber_docs(request: Request):
-    """Completely renumbers all documents 1, 2, 3... and fixes the counter."""
-    if "admins" not in request.state.perms: 
-        return RedirectResponse(url="/admin/?status=unauthorized", status_code=303)
-    try:
-        async with get_session() as session:
-            # 1. Renumber all existing rows sequentially based on their upload date
-            await session.execute(text("""
-                WITH renumbered AS (
-                    SELECT id as old_id, ROW_NUMBER() OVER (ORDER BY created_at, id) as new_id
-                    FROM documents
-                )
-                UPDATE documents d
-                SET id = r.new_id
-                FROM renumbered r
-                WHERE d.id = r.old_id
-            """))
-            
-            # 2. Reset the auto-increment counter to match the new highest ID
-            await session.execute(text("SELECT setval('documents_id_seq', (SELECT COALESCE(MAX(id), 1) FROM documents));"))
-            
-        return "✅ Success! All documents have been renumbered sequentially (1, 2, 3...). The ID counter is now perfectly fixed."
-    except Exception as e:
-        logger.error("renumber_docs_error", error=str(e), exc_info=True)
-        return f"❌ Error renumbering documents: {str(e)}"
