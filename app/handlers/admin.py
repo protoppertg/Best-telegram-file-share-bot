@@ -239,7 +239,6 @@ async def cb_admin_delete_bounty(callback: CallbackQuery):
             await session.flush()
             
     await callback.answer("✅ Bounty deleted successfully!", show_alert=True)
-    # Refresh the list
     await cb_admin_bounties(callback)
 
 @router.callback_query(F.data == "adm:bcast")
@@ -339,8 +338,17 @@ async def fs_clear(message: Message, state: FSMContext):
 @router.channel_post(F.document)
 async def auto_index_channel_post(message: Message, bot: Bot):
     try:
-        target_channel = int(settings.CHANNEL_ID)
-        if message.chat.id != target_channel:
+        main_channel = int(settings.CHANNEL_ID)
+        # Fetch admin upload channel from DB settings
+        async with get_session() as session:
+            res = await session.execute(select(BotSetting).where(BotSetting.key == "admin_upload_channel_id"))
+            s = res.scalar_one_or_none()
+            admin_upload_channel = int(s.value) if s and s.value else 0
+            
+        chat_id = message.chat.id
+        
+        # Ignore if it's not either of our channels
+        if chat_id not in [main_channel, admin_upload_channel]:
             return
             
         if message.caption and message.caption.startswith("📤 Uploaded by:"):
@@ -380,6 +388,18 @@ async def auto_index_channel_post(message: Message, bot: Bot):
                     )
                 except Exception:
                     pass
+
+        # If the file came from the Admin Upload Channel, copy it to the Main Database Channel
+        if admin_upload_channel and chat_id == admin_upload_channel:
+            try:
+                await bot.copy_message(
+                    chat_id=main_channel,
+                    from_chat_id=admin_upload_channel,
+                    message_id=message_id
+                )
+                logger.info(f"Forwarded file '{file_name}' from Admin Channel to Main DB Channel.")
+            except Exception as e:
+                logger.error(f"Failed to forward file to Main DB Channel: {e}")
 
     except Exception as e:
         logger.error("auto_index_error", error=str(e), exc_info=True)
