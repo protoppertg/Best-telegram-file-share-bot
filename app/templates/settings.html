@@ -130,6 +130,25 @@
     </div>
 
     <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+        <h2 class="text-xl font-bold mb-4 text-gray-900">Admin Upload Channel (Optional)</h2>
+        <form method="POST" action="/admin/settings" class="space-y-4">
+            <div>
+                <label class="block text-gray-700 text-sm font-bold mb-2">Admin Upload Channel ID</label>
+                <input type="text" name="admin_upload_channel_id" value="{{ admin_upload_channel_id }}" class="w-full border border-gray-200 p-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition" placeholder="-1001234567890">
+                <p class="text-gray-500 text-sm mt-2">If set, admins can upload files to this channel. The bot will auto-index them AND copy them to your Main Database Channel.</p>
+            </div>
+            <!-- Hidden inputs to retain other settings on submit -->
+            <input type="hidden" name="search_enabled" value="{% if search_enabled %}on{% endif %}">
+            <input type="hidden" name="auto_delete_enabled" value="{% if ad_enabled %}on{% endif %}">
+            <input type="hidden" name="protect_forwarding" value="{% if protect_forwarding %}on{% endif %}">
+            <input type="hidden" name="premium_enabled" value="{% if premium_enabled %}on{% endif %}">
+            <input type="hidden" name="shortlink_enabled" value="{% if shortlink_enabled %}on{% endif %}">
+            <input type="hidden" name="ai_study_buddy_enabled" value="{% if ai_study_buddy_enabled %}on{% endif %}">
+            <button type="submit" class="bg-blue-500 text-white px-6 py-2.5 rounded-xl hover:bg-blue-600 transition shadow-sm">Save Channel ID</button>
+        </form>
+    </div>
+
+    <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
         <h2 class="text-xl font-bold mb-4 text-gray-900">Force Sub Channels</h2>
         {% if channels %}
         <div class="mb-6 space-y-2">
