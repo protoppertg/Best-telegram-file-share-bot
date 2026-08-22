@@ -35,9 +35,20 @@ def setup_dispatcher(dispatcher: Dispatcher = dp) -> None:
     @dispatcher.errors()
     async def on_error(event: ErrorEvent, bot: Bot = bot):
         logger.error("unhandled_exception", error=str(event.exception), update_id=event.update.update_id if event.update else None, exc_info=True)
-        if event.update and event.update.message:
-            try: await bot.send_message(event.update.message.chat.id, "⚠️ An error occurred. Please try again.")
-            except Exception: pass
+        
+        # Handle Callback Query errors (so users get a popup instead of silence)
+        if event.update and event.update.callback_query:
+            try:
+                await event.update.callback_query.answer("⚠️ An error occurred. Please try again.", show_alert=True)
+            except Exception:
+                pass
+        # Handle Message errors
+        elif event.update and event.update.message:
+            try: 
+                await bot.send_message(event.update.message.chat.id, "⚠️ An error occurred. Please try again.")
+            except Exception: 
+                pass
+                
     logger.info("dispatcher_configured")
 
 async def on_startup() -> None:
