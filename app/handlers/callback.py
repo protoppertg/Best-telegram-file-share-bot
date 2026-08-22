@@ -91,7 +91,7 @@ async def bounty_download_callback(callback: CallbackQuery, bot: Bot):
             
         await callback.answer("📥 Sending file...")
         
-        safe_name = escape(sanitise_text(doc.file_name, 80))
+        safe_name = escape(sanitise_text(doc.file_name or "Untitled", 80))
         safe_subject = escape(doc.subject or 'N/A')
         
         try:
@@ -177,7 +177,7 @@ async def _send_file_to_user(bot: Bot, callback: CallbackQuery, doc, bot_setting
     protect = bot_settings["protect_forwarding"]
     post_file_msg = bot_settings["post_file_message"]
     
-    safe_name = escape(sanitise_text(doc.file_name, 80))
+    safe_name = escape(sanitise_text(doc.file_name or "Untitled", 80))
     safe_subject = escape(doc.subject or 'N/A')
     safe_category = escape(doc.category or 'N/A')
     
@@ -211,7 +211,7 @@ async def _send_file_to_user(bot: Bot, callback: CallbackQuery, doc, bot_setting
         )
     except TelegramBadRequest as e:
         logger.error("send_document_bad_request", error=str(e), doc_id=doc.id, file_id=doc.file_id)
-        try: await receipt_msg.edit_text("❌ <b>Error:</b> This file is corrupted or has been deleted from the storage channel. Please report this to the admin.")
+        try: await receipt_msg.edit_text(f"❌ <b>Error:</b> This file is corrupted or has been deleted from the storage channel. Please report this to the admin.\n\nError: {str(e)}")
         except Exception: pass
         return
     except Exception as e:
