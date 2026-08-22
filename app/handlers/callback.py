@@ -43,12 +43,19 @@ async def _get_settings(session) -> dict:
         elif row.key == "premium_enabled" and val == "false": data["premium_enabled"] = False
     return data
 
-async def _schedule_auto_delete(bot: Bot, chat_id: int, message_id: int, delay: int):
+async def _schedule_auto_delete(bot: Bot, chat_id: int, message_ids: list[int], delay: int):
+    """Lightweight background task to delete messages after a delay."""
     try:
         await asyncio.sleep(delay)
-        await bot.delete_message(chat_id=chat_id, message_id=message_id)
+        for msg_id in message_ids:
+            try:
+                await bot.delete_message(chat_id=chat_id, message_id=msg_id)
+            except TelegramBadRequest:
+                pass # Message already deleted or older than 48h
+            except Exception as e:
+                logger.warning("auto_delete_single_failed", chat_id=chat_id, msg_id=msg_id, error=str(e))
     except Exception as e:
-        logger.warning("auto_delete_failed", chat_id=chat_id, error=str(e))
+        logger.error("auto_delete_task_failed", error=str(e))
 
 @router.callback_query(F.data == "noop")
 async def noop_callback(callback: CallbackQuery):
@@ -88,10 +95,10 @@ async def bounty_download_callback(callback: CallbackQuery, bot: Bot):
         safe_subject = escape(doc.subject or 'N/A')
         
         # Send the file to the requester
-        await bot.send_document(
+        sent_file_msg = await bot.send_document(
             chat_id=callback.from_user.id, 
             document=doc.file_id, 
-            caption=f"📄 <b>{safe_name}</b>\n📚 {safe_subject}\n\nHere is your requested file!"
+            caption=f"📄 <b>{safe_name}</b>\n📚 {safe_subject}\n\nHere is your requested file! [{doc.doc_code}]"
         )
         
         # Delete the message with the button to "expire" the link
@@ -168,14 +175,16 @@ async def _send_file_to_user(bot: Bot, callback: CallbackQuery, doc, bot_setting
     safe_subject = escape(doc.subject or 'N/A')
     safe_category = escape(doc.category or 'N/A')
     
+    # 1. Send a premium "Receipt" message while the file is being fetched
     receipt_text = (
         f"<b>Preparing Document</b> 📥\n"
-        f"<blockquote><b>File:</b> {safe_name}\n"
+        f"<blockquote><b>File:</b> {safe_name} [{doc.doc_code}]\n"
         f"<b>Subject:</b> {safe_subject}</blockquote>\n"
         f"<i>Fetching from secure storage...</i>"
     )
     receipt_msg = await bot.send_message(chat_id=callback.from_user.id, text=receipt_text)
     
+    # 2. Send the actual file
     caption_parts = []
     if doc.subject: caption_parts.append(f"📚 {safe_subject}")
     if doc.category: caption_parts.append(f"🏷️ {safe_category}")
@@ -185,7 +194,8 @@ async def _send_file_to_user(bot: Bot, callback: CallbackQuery, doc, bot_setting
         chat_id=callback.from_user.id, document=doc.file_id, protect_content=protect, caption=caption
     )
 
-    msg_ids_to_delete = [sent_file_msg.message_id]
+    # Keep track of all message IDs sent so we can delete them all if Auto-Delete is on
+    msg_ids_to_delete = [sent_file_msg.message_id, receipt_msg.message_id]
 
     try:
         await receipt_msg.delete()
@@ -199,10 +209,11 @@ async def _send_file_to_user(bot: Bot, callback: CallbackQuery, doc, bot_setting
         except Exception as e:
             logger.error("post_file_message_send_failed", error=str(e))
 
+    # 3. Schedule Auto-Delete for ALL messages in one go (Lightweight)
     if is_ad_enabled and ad_seconds > 0:
-        for msg_id in msg_ids_to_delete:
-            asyncio.create_task(_schedule_auto_delete(bot, callback.from_user.id, msg_id, ad_seconds))
+        asyncio.create_task(_schedule_auto_delete(bot, callback.from_user.id, msg_ids_to_delete, ad_seconds))
 
+    # 4. Update the search results message to show it was sent
     from aiogram.utils.keyboard import InlineKeyboardBuilder
     kb = InlineKeyboardBuilder()
     
