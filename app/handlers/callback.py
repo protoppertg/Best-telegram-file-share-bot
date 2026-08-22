@@ -94,7 +94,6 @@ async def bounty_download_callback(callback: CallbackQuery, bot: Bot):
         safe_name = escape(sanitise_text(doc.file_name, 80))
         safe_subject = escape(doc.subject or 'N/A')
         
-        # Send the file to the requester
         try:
             await bot.send_document(
                 chat_id=callback.from_user.id, 
@@ -106,7 +105,6 @@ async def bounty_download_callback(callback: CallbackQuery, bot: Bot):
             await callback.message.answer("❌ Failed to send the file. The file may be corrupted or removed from storage.")
             return
         
-        # Delete the message with the button to "expire" the link
         try:
             await callback.message.delete()
         except Exception:
@@ -167,7 +165,10 @@ async def check_sub_callback(callback: CallbackQuery, bot: Bot):
 
 @router.callback_query(F.data == "search_again")
 async def search_again(callback: CallbackQuery):
-    await callback.message.edit_text("🔍 <b>New Search</b>\n\nType your search query or use <code>/search \"query\"</code>")
+    try:
+        await callback.message.edit_text("🔍 <b>New Search</b>\n\nType your search query or use <code>/search \"query\"</code>")
+    except Exception:
+        pass
     await callback.answer()
 
 async def _send_file_to_user(bot: Bot, callback: CallbackQuery, doc, bot_settings: dict, query_key: str, page: int):
@@ -248,9 +249,17 @@ async def _send_file_to_user(bot: Bot, callback: CallbackQuery, doc, bot_setting
     kb.button(text="🔍 New Search", callback_data="search_again")
     kb.adjust(1)
 
+    success_text = f"✅ <b>File sent successfully.</b>\n\n<i>Did this file help you? Say thanks to the uploader!</i>"
     try:
-        await callback.message.edit_text(f"✅ <b>File sent successfully.</b>\n\n<i>Did this file help you? Say thanks to the uploader!</i>", reply_markup=kb.as_markup())
-    except TelegramBadRequest: pass
+        await callback.message.edit_text(success_text, reply_markup=kb.as_markup())
+    except TelegramBadRequest:
+        # If the message is too old to edit (>48h), just send a new one
+        try:
+            await bot.send_message(chat_id=callback.from_user.id, text=success_text, reply_markup=kb.as_markup())
+        except Exception:
+            pass
+    except Exception as e:
+        logger.error("edit_message_after_send_failed", error=str(e))
 
 @router.callback_query(F.data.startswith("getfile:"))
 async def get_file_callback(callback: CallbackQuery, bot: Bot, db_user: User | None = None):
