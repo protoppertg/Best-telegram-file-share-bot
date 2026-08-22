@@ -36,13 +36,14 @@ def setup_dispatcher(dispatcher: Dispatcher = dp) -> None:
     async def on_error(event: ErrorEvent, bot: Bot = bot):
         logger.error("unhandled_exception", error=str(event.exception), update_id=event.update.update_id if event.update else None, exc_info=True)
         
-        # Handle Callback Query errors (so users get a popup instead of silence)
+        # If it's a callback query, we try to answer it. 
+        # But we MUST catch the exception because Aiogram throws an error if you answer twice.
         if event.update and event.update.callback_query:
             try:
                 await event.update.callback_query.answer("⚠️ An error occurred. Please try again.", show_alert=True)
             except Exception:
-                pass
-        # Handle Message errors
+                pass # Ignore "query is too old" errors
+        # If it's a message, send a text message
         elif event.update and event.update.message:
             try: 
                 await bot.send_message(event.update.message.chat.id, "⚠️ An error occurred. Please try again.")
