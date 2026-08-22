@@ -66,12 +66,10 @@ async def give_kudos(callback: CallbackQuery, bot: Bot):
     try:
         uploader_id = int(callback.data.split(":")[1])
         await add_aura(uploader_id, 1)
-        
         try:
             await bot.send_message(uploader_id, f"🙏 <b>Someone thanked you!</b>\nYour file was downloaded and a user said thanks. You earned <b>1 Aura</b>.")
         except Exception:
             pass
-            
         await callback.answer("🙏 Thanks sent! The uploader earned 1 Aura.", show_alert=True)
     except Exception:
         await callback.answer("Error sending kudos.", show_alert=True)
@@ -81,7 +79,6 @@ async def bounty_download_callback(callback: CallbackQuery, bot: Bot):
     """Handles the private bounty download button."""
     try:
         doc_id = int(callback.data.split(":")[1])
-        
         async with get_session() as session:
             doc = await doc_service.get_document_by_id(session, doc_id)
 
@@ -93,12 +90,13 @@ async def bounty_download_callback(callback: CallbackQuery, bot: Bot):
         
         safe_name = escape(sanitise_text(doc.file_name or "Untitled", 80))
         safe_subject = escape(doc.subject or 'N/A')
+        doc_code = getattr(doc, 'doc_code', 'N/A')
         
         try:
             await bot.send_document(
                 chat_id=callback.from_user.id, 
                 document=doc.file_id, 
-                caption=f"📄 <b>{safe_name}</b>\n📚 {safe_subject}\n\nHere is your requested file! [{doc.doc_code}]"
+                caption=f"📄 <b>{safe_name}</b>\n📚 {safe_subject}\n\nHere is your requested file! [{doc_code}]"
             )
         except Exception as e:
             logger.error("bounty_send_failed", error=str(e), doc_id=doc.id)
@@ -177,74 +175,61 @@ async def _send_file_to_user(bot: Bot, callback: CallbackQuery, doc, bot_setting
     protect = bot_settings["protect_forwarding"]
     post_file_msg = bot_settings["post_file_message"]
     
-    safe_name = escape(sanitise_text(doc.file_name or "Untitled", 80))
-    safe_subject = escape(doc.subject or 'N/A')
-    safe_category = escape(doc.category or 'N/A')
-    
-    # 1. Send a premium "Receipt" message while the file is being fetched
-    receipt_text = (
-        f"<b>Preparing Document</b> 📥\n"
-        f"<blockquote><b>File:</b> {safe_name} [{doc.doc_code}]\n"
-        f"<b>Subject:</b> {safe_subject}</blockquote>\n"
-        f"<i>Fetching from secure storage...</i>"
-    )
+    chat_id = callback.from_user.id
+    msg_ids_to_delete = []
     
     try:
-        receipt_msg = await bot.send_message(chat_id=callback.from_user.id, text=receipt_text)
-    except Exception as e:
-        logger.error("send_receipt_failed", error=str(e))
-        await callback.answer("❌ Error: Could not initiate download. Have you started the bot?", show_alert=True)
-        return
+        # Safely extract all document attributes
+        file_id = doc.file_id
+        file_name = escape(sanitise_text(doc.file_name or "Untitled", 80))
+        doc_code = getattr(doc, 'doc_code', 'N/A')
+        subject = escape(doc.subject or 'N/A')
+        category = escape(doc.category or 'N/A')
         
-    # 2. Send the actual file
-    caption_parts = []
-    if doc.subject: caption_parts.append(f"📚 {safe_subject}")
-    if doc.category: caption_parts.append(f"🏷️ {safe_category}")
-    caption = " | ".join(caption_parts) if caption_parts else None
-    
-    try:
+        # Build caption safely
+        caption_parts = [f"📄 <b>{file_name}</b> [{doc_code}]"]
+        if doc.subject: caption_parts.append(f"📚 {subject}")
+        if doc.category: caption_parts.append(f"🏷️ {category}")
+        caption = "\n".join(caption_parts)
+        
+        # Attempt to send the document
         sent_file_msg = await bot.send_document(
-            chat_id=callback.from_user.id, 
-            document=doc.file_id, 
+            chat_id=chat_id, 
+            document=file_id, 
             protect_content=protect, 
             caption=caption
         )
-    except TelegramBadRequest as e:
-        logger.error("send_document_bad_request", error=str(e), doc_id=doc.id, file_id=doc.file_id)
-        try: await receipt_msg.edit_text(f"❌ <b>Error:</b> This file is corrupted or has been deleted from the storage channel. Please report this to the admin.\n\nError: {str(e)}")
-        except Exception: pass
-        return
+        msg_ids_to_delete.append(sent_file_msg.message_id)
+        
     except Exception as e:
-        logger.error("send_document_unknown_error", error=str(e), doc_id=doc.id)
-        try: await receipt_msg.edit_text("❌ An unexpected error occurred while fetching the file.")
-        except Exception: pass
+        # If sending the file fails for ANY reason, log it and inform the user
+        logger.error("SEND_DOCUMENT_FAILED", error=str(e), doc_id=doc.id, file_id=doc.file_id, exc_info=True)
+        try:
+            error_msg = await bot.send_message(
+                chat_id=chat_id,
+                text=f"❌ <b>Error:</b> Failed to send file. It may be corrupted.\n\n<i>Reason: {escape(str(e))}</i>"
+            )
+            msg_ids_to_delete.append(error_msg.message_id)
+        except Exception as inner_e:
+            logger.error("SEND_ERROR_MESSAGE_FAILED", error=str(inner_e))
         return
 
-    # Keep track of all message IDs sent so we can delete them all if Auto-Delete is on
-    msg_ids_to_delete = [sent_file_msg.message_id, receipt_msg.message_id]
-
-    try:
-        await receipt_msg.delete()
-    except Exception:
-        pass
-
+    # If file sent successfully, send post-file message if it exists
     if post_file_msg:
         try:
-            sent_text_msg = await bot.send_message(chat_id=callback.from_user.id, text=post_file_msg, protect_content=protect)
+            sent_text_msg = await bot.send_message(chat_id=chat_id, text=post_file_msg, protect_content=protect)
             msg_ids_to_delete.append(sent_text_msg.message_id)
         except Exception as e:
             logger.error("post_file_message_send_failed", error=str(e))
 
-    # 3. Schedule Auto-Delete for ALL messages in one go (Lightweight)
+    # Schedule Auto-Delete for ALL messages
     if is_ad_enabled and ad_seconds > 0:
-        asyncio.create_task(_schedule_auto_delete(bot, callback.from_user.id, msg_ids_to_delete, ad_seconds))
+        asyncio.create_task(_schedule_auto_delete(bot, chat_id, msg_ids_to_delete, ad_seconds))
 
-    # 4. Update the search results message to show it was sent
+    # Update the search results message
     kb = InlineKeyboardBuilder()
-    
     if doc.uploaded_by:
         kb.button(text="🙏 Say Thanks", callback_data=f"kudos:{doc.uploaded_by}")
-        
     kb.button(text="⬅️ Back to results", callback_data=f"search:{query_key}:{page}")
     kb.button(text="🔍 New Search", callback_data="search_again")
     kb.adjust(1)
@@ -253,9 +238,9 @@ async def _send_file_to_user(bot: Bot, callback: CallbackQuery, doc, bot_setting
     try:
         await callback.message.edit_text(success_text, reply_markup=kb.as_markup())
     except TelegramBadRequest:
-        # If the message is too old to edit (>48h), just send a new one
+        # If the message is too old to edit, just send a new one
         try:
-            await bot.send_message(chat_id=callback.from_user.id, text=success_text, reply_markup=kb.as_markup())
+            await bot.send_message(chat_id=chat_id, text=success_text, reply_markup=kb.as_markup())
         except Exception:
             pass
     except Exception as e:
@@ -263,66 +248,93 @@ async def _send_file_to_user(bot: Bot, callback: CallbackQuery, doc, bot_setting
 
 @router.callback_query(F.data.startswith("getfile:"))
 async def get_file_callback(callback: CallbackQuery, bot: Bot, db_user: User | None = None):
-    parts = callback.data.split(":")
-    if len(parts) < 2:
-        await callback.answer("Invalid request.", show_alert=True)
-        return
-    doc_id = int(parts[1])
-    query_key = parts[2] if len(parts) > 2 else ""
-    page = int(parts[3]) if len(parts) > 3 else 1
+    try:
+        parts = callback.data.split(":")
+        if len(parts) < 2:
+            await callback.answer("Invalid request.", show_alert=True)
+            return
+        doc_id = int(parts[1])
+        query_key = parts[2] if len(parts) > 2 else ""
+        page = int(parts[3]) if len(parts) > 3 else 1
 
-    async with get_session() as session:
-        doc = await doc_service.get_document_by_id(session, doc_id)
-        bot_settings = await _get_settings(session)
+        async with get_session() as session:
+            doc = await doc_service.get_document_by_id(session, doc_id)
+            bot_settings = await _get_settings(session)
 
-    if not doc:
-        await callback.answer("File not found.", show_alert=True)
-        return
-    if not doc.approved:
-        await callback.answer("This file is pending approval.", show_alert=True)
-        return
+        if not doc:
+            await callback.answer("File not found.", show_alert=True)
+            return
+        if not doc.approved:
+            await callback.answer("This file is pending approval.", show_alert=True)
+            return
 
-    is_prem_enabled = bot_settings["premium_enabled"]
-    user_is_premium = is_prem_enabled and db_user and db_user.is_premium
+        is_prem_enabled = bot_settings["premium_enabled"]
+        user_is_premium = is_prem_enabled and db_user and db_user.is_premium
 
-    if bot_settings["shortlink_enabled"] and not user_is_premium:
-        original_url = "https://google.com" 
-        short_url = await get_shortlink(original_url)
+        if bot_settings["shortlink_enabled"] and not user_is_premium:
+            original_url = "https://google.com" 
+            short_url = await get_shortlink(original_url)
+            
+            kb = InlineKeyboardBuilder()
+            kb.button(text="📢 Visit Sponsor", url=short_url)
+            kb.button(text="📥 Download File", callback_data=f"dlfile:{doc_id}:{query_key}:{page}")
+            kb.adjust(1)
+            
+            await callback.message.edit_text(
+                f"⚠️ <b>Free User Download</b>\n\n"
+                f"To download this file, please support us by visiting the sponsor link below.\n"
+                f"<i>Premium users download directly without ads.</i>",
+                reply_markup=kb.as_markup()
+            )
+            await callback.answer()
+            return
+
+        # DO NOT answer the callback here. Let _send_file_to_user handle the UI.
+        # We just call the function. If it fails, it will send a text message.
+        await _send_file_to_user(bot, callback, doc, bot_settings, query_key, page)
         
-        kb = InlineKeyboardBuilder()
-        kb.button(text="📢 Visit Sponsor", url=short_url)
-        kb.button(text="📥 Download File", callback_data=f"dlfile:{doc_id}:{query_key}:{page}")
-        kb.adjust(1)
-        
-        await callback.message.edit_text(
-            f"⚠️ <b>Free User Download</b>\n\n"
-            f"To download this file, please support us by visiting the sponsor link below.\n"
-            f"<i>Premium users download directly without ads.</i>",
-            reply_markup=kb.as_markup()
-        )
-        await callback.answer()
-        return
+        # Answer the callback quietly to remove the loading spinner
+        try:
+            await callback.answer()
+        except Exception:
+            pass
 
-    await callback.answer("📥 Sending file...")
-    await _send_file_to_user(bot, callback, doc, bot_settings, query_key, page)
+    except Exception as e:
+        logger.error("get_file_callback_crash", error=str(e), exc_info=True)
+        try:
+            await bot.send_message(callback.from_user.id, f"❌ A critical error occurred: {escape(str(e))}")
+        except Exception:
+            pass
 
 @router.callback_query(F.data.startswith("dlfile:"))
 async def dl_file_callback(callback: CallbackQuery, bot: Bot):
-    parts = callback.data.split(":")
-    doc_id = int(parts[1])
-    query_key = parts[2] if len(parts) > 2 else ""
-    page = int(parts[3]) if len(parts) > 3 else 1
+    try:
+        parts = callback.data.split(":")
+        doc_id = int(parts[1])
+        query_key = parts[2] if len(parts) > 2 else ""
+        page = int(parts[3]) if len(parts) > 3 else 1
 
-    async with get_session() as session:
-        doc = await doc_service.get_document_by_id(session, doc_id)
-        bot_settings = await _get_settings(session)
+        async with get_session() as session:
+            doc = await doc_service.get_document_by_id(session, doc_id)
+            bot_settings = await _get_settings(session)
 
-    if not doc:
-        await callback.answer("File not found.", show_alert=True)
-        return
+        if not doc:
+            await callback.answer("File not found.", show_alert=True)
+            return
 
-    await callback.answer("📥 Sending file...")
-    await _send_file_to_user(bot, callback, doc, bot_settings, query_key, page)
+        await _send_file_to_user(bot, callback, doc, bot_settings, query_key, page)
+        
+        try:
+            await callback.answer()
+        except Exception:
+            pass
+        
+    except Exception as e:
+        logger.error("dl_file_callback_crash", error=str(e), exc_info=True)
+        try:
+            await bot.send_message(callback.from_user.id, f"❌ A critical error occurred: {escape(str(e))}")
+        except Exception:
+            pass
 
 @router.callback_query(F.data.startswith("search:"))
 async def search_pagination(callback: CallbackQuery):
@@ -338,7 +350,10 @@ async def search_pagination(callback: CallbackQuery):
 
     if not cache_data:
         await callback.answer("Search session expired. Please search again.", show_alert=True)
-        await callback.message.edit_text("🔍 Your search session has expired.\nType a new query or use /search.")
+        try:
+            await callback.message.edit_text("🔍 Your search session has expired.\nType a new query or use /search.")
+        except Exception:
+            pass
         return
 
     query = cache_data.get("query", " ")
