@@ -33,10 +33,15 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
             raise
 
 async def init_db():
-    """Creates tables and safely adds missing columns without Alembic."""
+    """Creates tables, extensions, and safely adds missing columns."""
     async with engine.begin() as conn:
+        # 1. Create PostgreSQL extensions for smart dedupe
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+        
+        # 2. Create tables
         await conn.run_sync(Base.metadata.create_all)
         
+        # 3. Safely add missing columns
         alters = [
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_banned BOOLEAN DEFAULT false",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_count INTEGER DEFAULT 0",
@@ -47,6 +52,7 @@ async def init_db():
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS chat_partner_id BIGINT",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS ai_name VARCHAR(255)",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS ai_language VARCHAR(50)",
+            "ALTER TABLE documents ADD COLUMN IF NOT EXISTS doc_code VARCHAR(15) UNIQUE",
             "ALTER TABLE documents ADD COLUMN IF NOT EXISTS class_name VARCHAR(100)",
             "ALTER TABLE documents ADD COLUMN IF NOT EXISTS keywords TEXT[]",
             "ALTER TABLE bot_settings ADD COLUMN IF NOT EXISTS value TEXT",
@@ -57,3 +63,10 @@ async def init_db():
                 await conn.execute(text(sql))
             except Exception:
                 pass
+            
+        # 4. Backfill missing doc_codes sequentially for existing rows
+        await conn.execute(text("""
+            UPDATE documents 
+            SET doc_code = 'DOC-' || lpad(id::text, 5, '0') 
+            WHERE doc_code IS NULL OR doc_code = ''
+        """))
