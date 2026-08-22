@@ -7,7 +7,7 @@
 
 <div class="space-y-6">
     <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-        <h2 class="text-xl font-bold mb-4 text-gray-900">Bot Texts</h2>
+        <h2 class="text-xl font-bold mb-4 text-gray-900">Bot Texts & Messages</h2>
         <form method="POST" action="/admin/settings" class="space-y-6">
             <div>
                 <label class="block text-gray-700 text-sm font-bold mb-2">Start Message (/start)</label>
@@ -20,6 +20,19 @@
             <div>
                 <label class="block text-gray-700 text-sm font-bold mb-2">Premium Message (/premium)</label>
                 <textarea name="premium_text" rows="6" class="w-full border border-gray-200 p-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition" placeholder="Leave blank to use default message.">{{ premium_text }}</textarea>
+            </div>
+            <div>
+                <label class="block text-gray-700 text-sm font-bold mb-2">Post-File Message (After Download)</label>
+                <textarea name="post_file_message" rows="3" class="w-full border border-gray-200 p-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition" placeholder="Leave blank to disable.">{{ post_file_message }}</textarea>
+            </div>
+
+            <hr class="border-gray-100">
+
+            <h2 class="text-xl font-bold pt-4 text-gray-900">Admin Upload Channel</h2>
+            <div>
+                <label class="block text-gray-700 text-sm font-bold mb-2">Admin Upload Channel ID</label>
+                <input type="text" name="admin_upload_channel_id" value="{{ admin_upload_channel_id }}" class="w-full border border-gray-200 p-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition" placeholder="-1001234567890">
+                <p class="text-gray-500 text-sm mt-2">If set, admins can upload files to this channel. The bot will auto-index them AND copy them to your Main Database Channel.</p>
             </div>
 
             <hr class="border-gray-100">
@@ -99,11 +112,6 @@
                 <input type="number" name="auto_delete_seconds" value="{{ ad_seconds }}" class="w-full bg-transparent border-none focus:outline-none text-sm">
             </div>
 
-            <div>
-                <label class="block text-gray-700 text-sm font-bold mb-2">Post-File Message</label>
-                <textarea name="post_file_message" rows="3" class="w-full border border-gray-200 p-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition" placeholder="Leave blank to disable.">{{ post_file_message }}</textarea>
-            </div>
-
             <hr class="border-gray-100">
 
             <h2 class="text-xl font-bold pt-4 text-gray-900">Link Shortener (Monetization)</h2>
@@ -125,26 +133,7 @@
                 </div>
             </div>
 
-            <button type="submit" class="bg-blue-500 text-white px-6 py-2.5 rounded-xl hover:bg-blue-600 transition shadow-sm mt-4">Save Settings</button>
-        </form>
-    </div>
-
-    <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-        <h2 class="text-xl font-bold mb-4 text-gray-900">Admin Upload Channel (Optional)</h2>
-        <form method="POST" action="/admin/settings" class="space-y-4">
-            <div>
-                <label class="block text-gray-700 text-sm font-bold mb-2">Admin Upload Channel ID</label>
-                <input type="text" name="admin_upload_channel_id" value="{{ admin_upload_channel_id }}" class="w-full border border-gray-200 p-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition" placeholder="-1001234567890">
-                <p class="text-gray-500 text-sm mt-2">If set, admins can upload files to this channel. The bot will auto-index them AND copy them to your Main Database Channel.</p>
-            </div>
-            <!-- Hidden inputs to retain other settings on submit -->
-            <input type="hidden" name="search_enabled" value="{% if search_enabled %}on{% endif %}">
-            <input type="hidden" name="auto_delete_enabled" value="{% if ad_enabled %}on{% endif %}">
-            <input type="hidden" name="protect_forwarding" value="{% if protect_forwarding %}on{% endif %}">
-            <input type="hidden" name="premium_enabled" value="{% if premium_enabled %}on{% endif %}">
-            <input type="hidden" name="shortlink_enabled" value="{% if shortlink_enabled %}on{% endif %}">
-            <input type="hidden" name="ai_study_buddy_enabled" value="{% if ai_study_buddy_enabled %}on{% endif %}">
-            <button type="submit" class="bg-blue-500 text-white px-6 py-2.5 rounded-xl hover:bg-blue-600 transition shadow-sm">Save Channel ID</button>
+            <button type="submit" class="bg-blue-500 text-white px-6 py-2.5 rounded-xl hover:bg-blue-600 transition shadow-sm mt-4">Save All Settings</button>
         </form>
     </div>
 
