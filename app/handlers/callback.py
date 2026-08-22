@@ -25,6 +25,9 @@ from app.utils.validators import sanitise_text
 
 router = Router()
 
+# Global set to hold background tasks so they don't get garbage collected
+_background_tasks = set()
+
 async def _get_settings(session) -> dict:
     result = await session.execute(select(BotSetting))
     settings_rows = result.scalars().all()
@@ -36,7 +39,12 @@ async def _get_settings(session) -> dict:
     for row in settings_rows:
         val = row.value or ""
         if row.key == "auto_delete_enabled" and val == "true": data["auto_delete_enabled"] = True
-        elif row.key == "auto_delete_seconds" and val.isdigit(): data["auto_delete_seconds"] = int(val)
+        elif row.key == "auto_delete_seconds":
+            try:
+                sec = int(val)
+                data["auto_delete_seconds"] = sec if sec > 0 else 3600
+            except ValueError:
+                data["auto_delete_seconds"] = 3600
         elif row.key == "protect_forwarding" and val == "true": data["protect_forwarding"] = True
         elif row.key == "post_file_message": data["post_file_message"] = val
         elif row.key == "shortlink_enabled" and val == "true": data["shortlink_enabled"] = True
@@ -44,7 +52,7 @@ async def _get_settings(session) -> dict:
     return data
 
 async def _schedule_auto_delete(bot: Bot, chat_id: int, message_ids: list[int], delay: int):
-    """Lightweight background task to delete messages after a delay."""
+    """Protected background task to delete messages after a delay."""
     try:
         await asyncio.sleep(delay)
         for msg_id in message_ids:
@@ -54,6 +62,13 @@ async def _schedule_auto_delete(bot: Bot, chat_id: int, message_ids: list[int], 
                 pass # Message already deleted or older than 48h
             except Exception as e:
                 logger.warning("auto_delete_single_failed", chat_id=chat_id, msg_id=msg_id, error=str(e))
+        
+        # Send a silent notification that the file was deleted
+        try:
+            await bot.send_message(chat_id, "🗑️ <i>File auto-deleted to save space. Use /search to find it again!</i>")
+        except Exception:
+            pass
+            
     except Exception as e:
         logger.error("auto_delete_task_failed", error=str(e))
 
@@ -202,12 +217,13 @@ async def _send_file_to_user(bot: Bot, callback: CallbackQuery, doc, bot_setting
         msg_ids_to_delete.append(sent_file_msg.message_id)
         
     except Exception as e:
-        # If sending the file fails for ANY reason, log it and inform the user
+        # If sending the file fails for ANY reason, log it internally but DO NOT show the error to the user
         logger.error("SEND_DOCUMENT_FAILED", error=str(e), doc_id=doc.id, file_id=doc.file_id, exc_info=True)
         try:
+            # Send a generic error message without revealing the reason
             error_msg = await bot.send_message(
                 chat_id=chat_id,
-                text=f"❌ <b>Error:</b> Failed to send file. It may be corrupted.\n\n<i>Reason: {escape(str(e))}</i>"
+                text="❌ <b>Error:</b> Failed to send file. It may be corrupted. Please try another result."
             )
             msg_ids_to_delete.append(error_msg.message_id)
         except Exception as inner_e:
@@ -222,9 +238,11 @@ async def _send_file_to_user(bot: Bot, callback: CallbackQuery, doc, bot_setting
         except Exception as e:
             logger.error("post_file_message_send_failed", error=str(e))
 
-    # Schedule Auto-Delete for ALL messages
+    # Schedule Auto-Delete with Global Task protection
     if is_ad_enabled and ad_seconds > 0:
-        asyncio.create_task(_schedule_auto_delete(bot, chat_id, msg_ids_to_delete, ad_seconds))
+        task = asyncio.create_task(_schedule_auto_delete(bot, chat_id, msg_ids_to_delete, ad_seconds))
+        _background_tasks.add(task) # Add to set to prevent garbage collection
+        task.add_done_callback(_background_tasks.discard) # Remove from set when done
 
     # Update the search results message
     kb = InlineKeyboardBuilder()
@@ -300,9 +318,10 @@ async def get_file_callback(callback: CallbackQuery, bot: Bot, db_user: User | N
             pass
 
     except Exception as e:
+        # Log internally, but DO NOT send confidential error text to the user
         logger.error("get_file_callback_crash", error=str(e), exc_info=True)
         try:
-            await bot.send_message(callback.from_user.id, f"❌ A critical error occurred: {escape(str(e))}")
+            await bot.send_message(callback.from_user.id, "❌ A critical error occurred. Please try again.")
         except Exception:
             pass
 
@@ -330,9 +349,10 @@ async def dl_file_callback(callback: CallbackQuery, bot: Bot):
             pass
         
     except Exception as e:
+        # Log internally, but DO NOT send confidential error text to the user
         logger.error("dl_file_callback_crash", error=str(e), exc_info=True)
         try:
-            await bot.send_message(callback.from_user.id, f"❌ A critical error occurred: {escape(str(e))}")
+            await bot.send_message(callback.from_user.id, "❌ A critical error occurred. Please try again.")
         except Exception:
             pass
 
