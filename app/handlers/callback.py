@@ -95,11 +95,16 @@ async def bounty_download_callback(callback: CallbackQuery, bot: Bot):
         safe_subject = escape(doc.subject or 'N/A')
         
         # Send the file to the requester
-        sent_file_msg = await bot.send_document(
-            chat_id=callback.from_user.id, 
-            document=doc.file_id, 
-            caption=f"📄 <b>{safe_name}</b>\n📚 {safe_subject}\n\nHere is your requested file! [{doc.doc_code}]"
-        )
+        try:
+            await bot.send_document(
+                chat_id=callback.from_user.id, 
+                document=doc.file_id, 
+                caption=f"📄 <b>{safe_name}</b>\n📚 {safe_subject}\n\nHere is your requested file! [{doc.doc_code}]"
+            )
+        except Exception as e:
+            logger.error("bounty_send_failed", error=str(e), doc_id=doc.id)
+            await callback.message.answer("❌ Failed to send the file. The file may be corrupted or removed from storage.")
+            return
         
         # Delete the message with the button to "expire" the link
         try:
@@ -182,17 +187,37 @@ async def _send_file_to_user(bot: Bot, callback: CallbackQuery, doc, bot_setting
         f"<b>Subject:</b> {safe_subject}</blockquote>\n"
         f"<i>Fetching from secure storage...</i>"
     )
-    receipt_msg = await bot.send_message(chat_id=callback.from_user.id, text=receipt_text)
     
+    try:
+        receipt_msg = await bot.send_message(chat_id=callback.from_user.id, text=receipt_text)
+    except Exception as e:
+        logger.error("send_receipt_failed", error=str(e))
+        await callback.answer("❌ Error: Could not initiate download. Have you started the bot?", show_alert=True)
+        return
+        
     # 2. Send the actual file
     caption_parts = []
     if doc.subject: caption_parts.append(f"📚 {safe_subject}")
     if doc.category: caption_parts.append(f"🏷️ {safe_category}")
     caption = " | ".join(caption_parts) if caption_parts else None
     
-    sent_file_msg = await bot.send_document(
-        chat_id=callback.from_user.id, document=doc.file_id, protect_content=protect, caption=caption
-    )
+    try:
+        sent_file_msg = await bot.send_document(
+            chat_id=callback.from_user.id, 
+            document=doc.file_id, 
+            protect_content=protect, 
+            caption=caption
+        )
+    except TelegramBadRequest as e:
+        logger.error("send_document_bad_request", error=str(e), doc_id=doc.id, file_id=doc.file_id)
+        try: await receipt_msg.edit_text("❌ <b>Error:</b> This file is corrupted or has been deleted from the storage channel. Please report this to the admin.")
+        except Exception: pass
+        return
+    except Exception as e:
+        logger.error("send_document_unknown_error", error=str(e), doc_id=doc.id)
+        try: await receipt_msg.edit_text("❌ An unexpected error occurred while fetching the file.")
+        except Exception: pass
+        return
 
     # Keep track of all message IDs sent so we can delete them all if Auto-Delete is on
     msg_ids_to_delete = [sent_file_msg.message_id, receipt_msg.message_id]
@@ -214,7 +239,6 @@ async def _send_file_to_user(bot: Bot, callback: CallbackQuery, doc, bot_setting
         asyncio.create_task(_schedule_auto_delete(bot, callback.from_user.id, msg_ids_to_delete, ad_seconds))
 
     # 4. Update the search results message to show it was sent
-    from aiogram.utils.keyboard import InlineKeyboardBuilder
     kb = InlineKeyboardBuilder()
     
     if doc.uploaded_by:
