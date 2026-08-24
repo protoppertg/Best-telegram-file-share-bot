@@ -11,10 +11,17 @@ from app.config import settings
 
 
 def validate_pdf_document(doc: TgDocument) -> tuple[bool, str]:
-    if not doc.mime_type or "pdf" not in doc.mime_type.lower():
+    """Validates that the file is a PDF. No size restrictions."""
+    # Check if it's a PDF based on mime type or file extension
+    is_pdf = False
+    if doc.mime_type and "pdf" in doc.mime_type.lower():
+        is_pdf = True
+    elif doc.file_name and doc.file_name.lower().endswith(".pdf"):
+        is_pdf = True
+        
+    if not is_pdf:
         return False, "Only PDF files are accepted."
-    if doc.file_size and doc.file_size > settings.max_file_size_bytes:
-        return False, f"File too large. Maximum size is {settings.MAX_FILE_SIZE_MB} MB."
+        
     return True, ""
 
 
