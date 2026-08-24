@@ -73,7 +73,6 @@ async def get_user_search_limit(user: User) -> int:
         r_amount = int(r_amount_val) if r_amount_val and r_amount_val.isdigit() else 0
         
         ref_bonus = (r_amount * user.referral_count) if r_type == "searches" else 0
-        # Safely get perm_search_bonus
         perm_bonus = getattr(user, "perm_search_bonus", 0) or 0
 
         if not prem_enabled:
@@ -88,7 +87,8 @@ async def get_user_search_limit(user: User) -> int:
         return int(base_val) + ref_bonus + perm_bonus
 
 async def get_user_upload_limit(user: User) -> int:
-    return settings.PREMIUM_UPLOAD_LIMIT if user.is_premium else settings.FREE_UPLOAD_LIMIT
+    """Uploads are now completely unlimited. Returns a massive number."""
+    return 999999
 
 async def check_search_limit(user: User) -> bool:
     return user.search_count < await get_user_search_limit(user)
@@ -250,19 +250,38 @@ async def check_bounty_match(session: AsyncSession, file_name: str, uploader_id:
     return None
 
 def auto_tag_file(file_name: str) -> dict:
+    """Extremely Smart AI Auto-Tagger."""
     tags = {"subject": None, "category": None, "class_name": None, "year": None}
+    
+    # Year Extraction
     year_match = re.search(r'(20\d{2})', file_name)
     if year_match: tags["year"] = int(year_match.group(1))
-    class_match = re.search(r'(?:class|cls)[\s_-]*(\d{1,2})', file_name, re.I)
+    
+    # Class Extraction
+    class_match = re.search(r'(?:class|cls|grade|sem|semester)[\s_-]*(\d{1,2})', file_name, re.I)
     if class_match: tags["class_name"] = f"Class {class_match.group(1)}"
-    if re.search(r'pyq|previous year|question paper|solved', file_name, re.I): tags["category"] = "PYQ"
-    elif re.search(r'notes|guide|handbook|solutions', file_name, re.I): tags["category"] = "Notes"
-    elif re.search(r'book|textbook', file_name, re.I): tags["category"] = "Book"
-    subjects = ["physics", "chemistry", "math", "maths", "biology", "english", "history", "geography", "cs", "computer", "economics"]
+    
+    # Category Extraction (Expanded)
+    if re.search(r'pyq|previous year|question paper|solved|unsolved|sample', file_name, re.I): tags["category"] = "PYQ"
+    elif re.search(r'notes|guide|handbook|summary|cheat|formula|module', file_name, re.I): tags["category"] = "Notes"
+    elif re.search(r'book|textbook|novel', file_name, re.I): tags["category"] = "Book"
+    elif re.search(r'assignment|lab|manual|experiment', file_name, re.I): tags["category"] = "Assignment"
+    elif re.search(r'solution|answer|key', file_name, re.I): tags["category"] = "Solutions"
+    elif re.search(r'slide|ppt|presentation', file_name, re.I): tags["category"] = "Slides"
+    
+    # Subject Extraction (Massively Expanded)
+    subjects = [
+        "physics", "chemistry", "math", "maths", "mathematics", "biology", "english", "hindi", 
+        "history", "geography", "civics", "economics", "political", "science", "computer", "cs", 
+        "it", "electronics", "mechanical", "civil", "electrical", "commerce", "accounts", 
+        "business", "law", "arts", "jee", "neet", "upsc", "ssc", "gate", "cat", "mat", "zoology", "botany", "toefl", "ielts"
+    ]
+    file_lower = file_name.lower()
     for sub in subjects:
-        if sub in file_name.lower():
+        if sub in file_lower:
             tags["subject"] = sub.capitalize()
             break
+            
     return tags
 
 async def get_stats(session: AsyncSession) -> dict:
