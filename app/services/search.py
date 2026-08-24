@@ -1,11 +1,11 @@
-"""PostgreSQL full-text search service (Highly Optimized & Dynamic)."""
+"""PostgreSQL full-text search service (Pure ORM - Bulletproof)."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import List, Optional
 
-from sqlalchemy import or_, select, func, desc
+from sqlalchemy import or_, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -38,14 +38,6 @@ async def search_documents(
     if not words:
         words = [""]
 
-    # Cache key includes all filters to ensure dynamic caching
-    cache_key = f"search:{query}:{page}:{subject}:{class_name}:{year}"
-    
-    cache = await get_cache()
-    cached = await cache.get(cache_key)
-    if cached:
-        return [SearchRow(**r) for r in cached["rows"]], cached["total"]
-
     try:
         stmt = select(Document).where(Document.approved == True)
         count_stmt = select(func.count(Document.id)).where(Document.approved == True)
@@ -75,19 +67,20 @@ async def search_documents(
             count_stmt = count_stmt.where(Document.year == year)
 
         # Intelligent Ranking
-        # 1. Files that contain the EXACT full phrase get priority (rank 0)
-        # 2. Files that START WITH the first word get secondary priority (rank 1)
-        # 3. Everything else (rank 2)
-        exact_phrase_rank = Document.file_name.ilike(f"%{query.strip()}%").desc()
-        starts_with_rank = Document.file_name.ilike(f"{words[0]}%").desc()
-        
+        first_word = words[0]
         stmt = stmt.order_by(
-            exact_phrase_rank,
-            starts_with_rank,
+            Document.file_name.ilike(f"{first_word}%").desc(),
             Document.created_at.desc()
         )
 
         stmt = stmt.offset(offset).limit(per_page)
+
+        cache_key = f"search:{query}:{page}:{subject}:{class_name}:{year}"
+        
+        cache = await get_cache()
+        cached = await cache.get(cache_key)
+        if cached:
+            return [SearchRow(**r) for r in cached["rows"]], cached["total"]
 
         # Execute queries
         result = await session.execute(stmt)
@@ -101,6 +94,7 @@ async def search_documents(
         # Cache results for 10 minutes to make it EXTREMELY fast for subsequent users
         await cache.set(cache_key, {"rows": rows, "total": total}, ttl=600)
         return [SearchRow(**r) for r in rows], total
+        
     except Exception as e:
         logger.error("search_database_error", error=str(e), exc_info=True)
         await session.rollback()
